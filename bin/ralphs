@@ -1,0 +1,215 @@
+#!/bin/bash
+#
+# ralphs - Multi-Agent Orchestration Harness
+# Version: 0.1.0
+#
+# A thin glue between tmux, tickets, hooks, and tools.
+# No daemons. No databases. Just shell scripts, markdown files, and Unix philosophy.
+#
+
+set -euo pipefail
+
+RALPHS_VERSION="0.1.0"
+RALPHS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RALPHS_LIB="$RALPHS_ROOT/lib"
+RALPHS_DEFAULTS="$RALPHS_ROOT/defaults"
+
+# Exit codes
+EXIT_SUCCESS=0
+EXIT_ERROR=1
+EXIT_INVALID_ARGS=2
+EXIT_SESSION_NOT_FOUND=3
+EXIT_PANE_NOT_FOUND=4
+EXIT_TICKET_NOT_FOUND=5
+EXIT_INVALID_TRANSITION=6
+
+# Source library functions
+source "$RALPHS_LIB/config.sh"
+source "$RALPHS_LIB/session.sh"
+source "$RALPHS_LIB/pane.sh"
+source "$RALPHS_LIB/ticket.sh"
+source "$RALPHS_LIB/tools.sh"
+source "$RALPHS_LIB/hooks.sh"
+source "$RALPHS_LIB/utils.sh"
+
+# Global flags (set by parse_global_flags)
+RALPHS_QUIET=false
+RALPHS_VERBOSE=false
+
+usage() {
+    cat <<EOF
+ralphs - Multi-Agent Orchestration Harness v$RALPHS_VERSION
+
+Usage: ralphs <command> [options]
+
+Session Management:
+  init [--session NAME]         Initialize a new ralphs session
+  attach [--session NAME]       Attach to existing session
+  teardown [--force]            Tear down session and cleanup
+
+Pane Management:
+  spawn <role> [ticket-id]      Spawn an agent in a new pane
+  list [--format FORMAT]        List active panes
+  kill <pane-id> [--release]    Kill a worker pane
+  ping <pane-id> <message>      Send message to a worker
+
+Observability:
+  status [--verbose]            Overview of the hive
+  fetch <pane-id> [prompt]      Get summarized worker progress
+  digest [prompt]               Summarize the whole hive
+  logs <pane-id> [--tail N]     Raw pane output
+
+Ticket Management:
+  ticket create <title> [opts]  Create a new ticket
+  ticket list [--state STATE]   List tickets
+  ticket show <id>              Show ticket details
+  ticket ready                  Tickets available to claim
+  ticket blocked                Tickets waiting on deps
+  ticket tree <id>              Dependency tree
+  ticket claim <id>             Claim a ticket
+  ticket transition <id> <st>   Transition ticket state
+  ticket edit <id>              Edit ticket in \$EDITOR
+  ticket feedback <id> <src> <msg>  Add feedback
+
+Global Options:
+  --session NAME                Specify tmux session
+  --config PATH                 Specify config file
+  --quiet                       Suppress non-essential output
+  --verbose                     Extra debugging output
+  --help                        Show help
+
+Examples:
+  ralphs init
+  ralphs ticket create "Add auth" --type feature
+  ralphs spawn supervisor
+  ralphs spawn impl tk-5c46
+  ralphs status
+EOF
+}
+
+parse_global_flags() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --session)
+                export RALPHS_SESSION="$2"
+                shift 2
+                ;;
+            --config)
+                export RALPHS_CONFIG_PATH="$2"
+                shift 2
+                ;;
+            --quiet)
+                RALPHS_QUIET=true
+                shift
+                ;;
+            --verbose)
+                RALPHS_VERBOSE=true
+                shift
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            --version|-v)
+                echo "ralphs v$RALPHS_VERSION"
+                exit 0
+                ;;
+            *)
+                # Return remaining args
+                REMAINING_ARGS=("$@")
+                return 0
+                ;;
+        esac
+    done
+    REMAINING_ARGS=()
+}
+
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+        exit $EXIT_INVALID_ARGS
+    fi
+
+    # Parse global flags first
+    parse_global_flags "$@"
+    set -- "${REMAINING_ARGS[@]:-}"
+
+    if [[ $# -eq 0 ]]; then
+        usage
+        exit $EXIT_INVALID_ARGS
+    fi
+
+    local cmd="$1"
+    shift
+
+    case "$cmd" in
+        # Session management
+        init)
+            cmd_init "$@"
+            ;;
+        attach)
+            cmd_attach "$@"
+            ;;
+        teardown)
+            cmd_teardown "$@"
+            ;;
+
+        # Pane management
+        spawn)
+            cmd_spawn "$@"
+            ;;
+        list)
+            cmd_list "$@"
+            ;;
+        kill)
+            cmd_kill "$@"
+            ;;
+        ping)
+            cmd_ping "$@"
+            ;;
+
+        # Observability
+        status)
+            cmd_status "$@"
+            ;;
+        fetch)
+            cmd_fetch "$@"
+            ;;
+        digest)
+            cmd_digest "$@"
+            ;;
+        logs)
+            cmd_logs "$@"
+            ;;
+        context)
+            cmd_context "$@"
+            ;;
+
+        # Ticket subcommands
+        ticket)
+            cmd_ticket "$@"
+            ;;
+
+        # Utilities
+        has-capacity)
+            cmd_has_capacity "$@"
+            ;;
+
+        # Internal
+        --ephemeral)
+            cmd_ephemeral "$@"
+            ;;
+
+        help|--help|-h)
+            usage
+            ;;
+
+        *)
+            error "Unknown command: $cmd"
+            usage
+            exit $EXIT_INVALID_ARGS
+            ;;
+    esac
+}
+
+main "$@"

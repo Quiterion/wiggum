@@ -1,0 +1,533 @@
+#!/bin/bash
+#
+# ticket.sh - Ticket management system
+#
+
+# Valid states and transitions
+VALID_STATES=("ready" "claimed" "implement" "review" "qa" "done")
+
+# State transition rules: from -> allowed targets
+declare -A TRANSITIONS=(
+    ["ready"]="claimed"
+    ["claimed"]="implement"
+    ["implement"]="review"
+    ["review"]="qa implement"
+    ["qa"]="done implement"
+)
+
+# Ticket subcommand router
+cmd_ticket() {
+    if [[ $# -eq 0 ]]; then
+        error "Usage: ralphs ticket <subcommand>"
+        echo "Subcommands: create, list, show, ready, blocked, tree, claim, transition, edit, feedback"
+        exit $EXIT_INVALID_ARGS
+    fi
+
+    local subcmd="$1"
+    shift
+
+    case "$subcmd" in
+        create)
+            ticket_create "$@"
+            ;;
+        list)
+            ticket_list "$@"
+            ;;
+        show)
+            ticket_show "$@"
+            ;;
+        ready)
+            ticket_ready "$@"
+            ;;
+        blocked)
+            ticket_blocked "$@"
+            ;;
+        tree)
+            ticket_tree "$@"
+            ;;
+        claim)
+            ticket_claim "$@"
+            ;;
+        transition)
+            ticket_transition "$@"
+            ;;
+        edit)
+            ticket_edit "$@"
+            ;;
+        feedback)
+            ticket_feedback "$@"
+            ;;
+        *)
+            error "Unknown subcommand: $subcmd"
+            exit $EXIT_INVALID_ARGS
+            ;;
+    esac
+}
+
+# Create a new ticket
+ticket_create() {
+    if [[ $# -lt 1 ]]; then
+        error "Usage: ralphs ticket create <title> [--type TYPE] [--priority N] [--dep ID]"
+        exit $EXIT_INVALID_ARGS
+    fi
+
+    local title="$1"
+    shift
+
+    local type="task"
+    local priority=2
+    local deps=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --type)
+                type="$2"
+                shift 2
+                ;;
+            --priority)
+                priority="$2"
+                shift 2
+                ;;
+            --dep)
+                deps+=("$2")
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    require_project
+
+    # Generate ticket ID
+    local id=$(generate_id "tk")
+    local ticket_path="$TICKETS_DIR/${id}.md"
+
+    # Build dependencies YAML
+    local deps_yaml=""
+    if [[ ${#deps[@]} -gt 0 ]]; then
+        deps_yaml="depends_on:"
+        for dep in "${deps[@]}"; do
+            deps_yaml+="\n  - $dep"
+        done
+    else
+        deps_yaml="depends_on: []"
+    fi
+
+    # Determine initial state (ready if no deps, otherwise blocked implicitly)
+    local state="ready"
+
+    # Create ticket file
+    cat > "$ticket_path" <<EOF
+---
+id: $id
+type: $type
+priority: $priority
+state: $state
+assigned_pane:
+assigned_at:
+$(echo -e "$deps_yaml")
+blocks: []
+created_at: $(timestamp)
+created_by: manual
+---
+
+# $title
+
+## Description
+
+[Add description here]
+
+## Acceptance Criteria
+
+- [ ] [Add criteria]
+
+## Feedback
+
+## Notes
+
+EOF
+
+    success "Created ticket: $id"
+    echo "$id"
+}
+
+# List tickets
+ticket_list() {
+    local filter_state=""
+    local filter_type=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --state)
+                filter_state="$2"
+                shift 2
+                ;;
+            --type)
+                filter_type="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    require_project
+
+    echo ""
+    printf "${BOLD}%-10s %-10s %-10s %-3s %-40s${NC}\n" "ID" "STATE" "TYPE" "PRI" "TITLE"
+    echo "-------------------------------------------------------------------------------"
+
+    for ticket_file in "$TICKETS_DIR"/*.md; do
+        [[ -f "$ticket_file" ]] || continue
+
+        local id=$(get_frontmatter_value "$ticket_file" "id")
+        local state=$(get_frontmatter_value "$ticket_file" "state")
+        local type=$(get_frontmatter_value "$ticket_file" "type")
+        local priority=$(get_frontmatter_value "$ticket_file" "priority")
+
+        # Apply filters
+        if [[ -n "$filter_state" ]] && [[ "$state" != "$filter_state" ]]; then continue; fi
+        if [[ -n "$filter_type" ]] && [[ "$type" != "$filter_type" ]]; then continue; fi
+
+        # Get title (first H1)
+        local title=$(grep -m1 '^# ' "$ticket_file" | sed 's/^# //')
+
+        # Truncate title if needed
+        if [[ ${#title} -gt 38 ]]; then title="${title:0:35}..."; fi
+
+        printf "%-10s %-10s %-10s %-3s %-40s\n" "$id" "$state" "$type" "$priority" "$title"
+    done
+
+    echo ""
+}
+
+# Show ticket details
+ticket_show() {
+    if [[ $# -lt 1 ]]; then
+        error "Usage: ralphs ticket show <id>"
+        exit $EXIT_INVALID_ARGS
+    fi
+
+    local id=$(resolve_ticket_id "$1") || exit $EXIT_TICKET_NOT_FOUND
+    require_project
+
+    local ticket_path="$TICKETS_DIR/${id}.md"
+    if [[ ! -f "$ticket_path" ]]; then
+        error "Ticket not found: $id"
+        exit $EXIT_TICKET_NOT_FOUND
+    fi
+
+    cat "$ticket_path"
+}
+
+# List ready tickets (no unmet dependencies)
+ticket_ready() {
+    local limit=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --limit)
+                limit="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    require_project
+
+    local count=0
+    for ticket_file in "$TICKETS_DIR"/*.md; do
+        [[ -f "$ticket_file" ]] || continue
+
+        local state=$(get_frontmatter_value "$ticket_file" "state")
+        if [[ "$state" != "ready" ]]; then continue; fi
+
+        # Check dependencies
+        local blocked=false
+        local deps=$(awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}' "$ticket_file")
+
+        for dep in $deps; do
+            if [[ -z "$dep" ]]; then continue; fi
+            local dep_file="$TICKETS_DIR/${dep}.md"
+            if [[ -f "$dep_file" ]]; then
+                local dep_state=$(get_frontmatter_value "$dep_file" "state")
+                if [[ "$dep_state" != "done" ]]; then
+                    blocked=true
+                    break
+                fi
+            fi
+        done
+
+        if [[ "$blocked" == "true" ]]; then continue; fi
+
+        local id=$(get_frontmatter_value "$ticket_file" "id")
+        echo "$id"
+
+        count=$((count + 1))
+        if [[ -n "$limit" ]] && [[ $count -ge $limit ]]; then break; fi
+    done
+}
+
+# List blocked tickets
+ticket_blocked() {
+    require_project
+
+    for ticket_file in "$TICKETS_DIR"/*.md; do
+        [[ -f "$ticket_file" ]] || continue
+
+        local state=$(get_frontmatter_value "$ticket_file" "state")
+        if [[ "$state" != "ready" ]]; then continue; fi
+
+        # Check dependencies
+        local deps=$(awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}' "$ticket_file")
+        local blocking_deps=""
+
+        for dep in $deps; do
+            if [[ -z "$dep" ]]; then continue; fi
+            local dep_file="$TICKETS_DIR/${dep}.md"
+            if [[ -f "$dep_file" ]]; then
+                local dep_state=$(get_frontmatter_value "$dep_file" "state")
+                if [[ "$dep_state" != "done" ]]; then
+                    blocking_deps="$blocking_deps $dep"
+                fi
+            fi
+        done
+
+        if [[ -n "$blocking_deps" ]]; then
+            local id=$(get_frontmatter_value "$ticket_file" "id")
+            echo "$id blocked by:$blocking_deps"
+        fi
+    done
+}
+
+# Show dependency tree
+ticket_tree() {
+    if [[ $# -lt 1 ]]; then
+        error "Usage: ralphs ticket tree <id>"
+        exit $EXIT_INVALID_ARGS
+    fi
+
+    local id=$(resolve_ticket_id "$1") || exit $EXIT_TICKET_NOT_FOUND
+    require_project
+
+    _print_tree "$id" 0
+}
+
+_print_tree() {
+    local id="$1"
+    local depth="$2"
+    local indent=""
+
+    for ((i=0; i<depth; i++)); do
+        indent="$indent  "
+    done
+
+    local ticket_path="$TICKETS_DIR/${id}.md"
+    if [[ ! -f "$ticket_path" ]]; then
+        echo "${indent}$id (not found)"
+        return
+    fi
+
+    local state=$(get_frontmatter_value "$ticket_path" "state")
+    local title=$(grep -m1 '^# ' "$ticket_path" | sed 's/^# //')
+
+    if [[ $depth -eq 0 ]]; then
+        echo "$id [$state] $title"
+    else
+        echo "${indent}└── $id [$state] $title"
+    fi
+
+    # Print dependencies
+    local deps=$(awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}' "$ticket_path")
+    for dep in $deps; do
+        if [[ -z "$dep" ]]; then continue; fi
+        _print_tree "$dep" $((depth + 1))
+    done
+}
+
+# Claim a ticket
+ticket_claim() {
+    if [[ $# -lt 1 ]]; then
+        error "Usage: ralphs ticket claim <id>"
+        exit $EXIT_INVALID_ARGS
+    fi
+
+    local id=$(resolve_ticket_id "$1") || exit $EXIT_TICKET_NOT_FOUND
+    require_project
+
+    local ticket_path="$TICKETS_DIR/${id}.md"
+    local current_state=$(get_frontmatter_value "$ticket_path" "state")
+
+    if [[ "$current_state" != "ready" ]]; then
+        error "Cannot claim ticket in state: $current_state"
+        exit $EXIT_INVALID_TRANSITION
+    fi
+
+    set_frontmatter_value "$ticket_path" "state" "claimed"
+    set_frontmatter_value "$ticket_path" "assigned_at" "$(timestamp)"
+
+    run_hook "on-claim" "$id"
+
+    success "Claimed $id"
+}
+
+# Transition ticket state
+ticket_transition() {
+    if [[ $# -lt 2 ]]; then
+        error "Usage: ralphs ticket transition <id> <state> [--no-hooks]"
+        exit $EXIT_INVALID_ARGS
+    fi
+
+    local id=$(resolve_ticket_id "$1") || exit $EXIT_TICKET_NOT_FOUND
+    local new_state="$2"
+    shift 2
+
+    local skip_hooks=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-hooks)
+                skip_hooks=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    require_project
+
+    local ticket_path="$TICKETS_DIR/${id}.md"
+    local current_state=$(get_frontmatter_value "$ticket_path" "state")
+
+    # Validate state
+    local valid=false
+    for s in "${VALID_STATES[@]}"; do
+        if [[ "$new_state" == "$s" ]]; then valid=true; break; fi
+    done
+
+    if [[ "$valid" != "true" ]]; then
+        error "Invalid state: $new_state"
+        error "Valid states: ${VALID_STATES[*]}"
+        exit $EXIT_INVALID_TRANSITION
+    fi
+
+    # Check transition is allowed
+    local allowed="${TRANSITIONS[$current_state]:-}"
+    if [[ ! " $allowed " =~ " $new_state " ]]; then
+        error "Cannot transition from '$current_state' to '$new_state'"
+        error "Allowed transitions from '$current_state': $allowed"
+        exit $EXIT_INVALID_TRANSITION
+    fi
+
+    # Update state
+    set_frontmatter_value "$ticket_path" "state" "$new_state"
+
+    # Determine hook to run
+    local hook_name=""
+    case "$new_state" in
+        review)
+            hook_name="on-implement-done"
+            ;;
+        qa)
+            hook_name="on-review-done"
+            ;;
+        implement)
+            if [[ "$current_state" == "review" ]]; then
+                hook_name="on-review-rejected"
+            elif [[ "$current_state" == "qa" ]]; then
+                hook_name="on-qa-rejected"
+            fi
+            ;;
+        done)
+            hook_name="on-qa-done"
+            ;;
+    esac
+
+    # Export context for hooks
+    export RALPHS_TICKET_ID="$id"
+    export RALPHS_TICKET_PATH="$ticket_path"
+    export RALPHS_PREV_STATE="$current_state"
+    export RALPHS_NEW_STATE="$new_state"
+    export RALPHS_PANE=$(get_frontmatter_value "$ticket_path" "assigned_pane")
+
+    # Run hook
+    if [[ "$skip_hooks" != "true" ]] && [[ -n "$hook_name" ]]; then
+        run_hook "$hook_name" "$id"
+    fi
+
+    # Run on-close if done
+    if [[ "$new_state" == "done" ]] && [[ "$skip_hooks" != "true" ]]; then
+        run_hook "on-close" "$id"
+    fi
+
+    success "Transitioned $id: $current_state -> $new_state"
+}
+
+# Edit ticket in editor
+ticket_edit() {
+    if [[ $# -lt 1 ]]; then
+        error "Usage: ralphs ticket edit <id>"
+        exit $EXIT_INVALID_ARGS
+    fi
+
+    local id=$(resolve_ticket_id "$1") || exit $EXIT_TICKET_NOT_FOUND
+    require_project
+    load_config
+
+    local ticket_path="$TICKETS_DIR/${id}.md"
+    ${RALPHS_EDITOR} "$ticket_path"
+}
+
+# Add feedback to ticket
+ticket_feedback() {
+    if [[ $# -lt 3 ]]; then
+        error "Usage: ralphs ticket feedback <id> <source> <message>"
+        exit $EXIT_INVALID_ARGS
+    fi
+
+    local id=$(resolve_ticket_id "$1") || exit $EXIT_TICKET_NOT_FOUND
+    local source="$2"
+    shift 2
+    local message="$*"
+
+    require_project
+
+    local ticket_path="$TICKETS_DIR/${id}.md"
+
+    # Append feedback to ticket
+    local feedback_entry="
+### From $source ($(human_timestamp))
+
+$message
+"
+
+    # Find the ## Feedback section and append after it
+    local temp=$(mktemp)
+    awk -v feedback="$feedback_entry" '
+        /^## Feedback/ {
+            print
+            print feedback
+            next
+        }
+        { print }
+    ' "$ticket_path" > "$temp"
+    mv "$temp" "$ticket_path"
+
+    # Ping assigned pane if any
+    local pane=$(get_frontmatter_value "$ticket_path" "assigned_pane")
+    if [[ -n "$pane" ]]; then
+        load_config
+        if session_exists "$RALPHS_SESSION"; then
+            tmux send-keys -t "$RALPHS_SESSION:main" "# Feedback added to your ticket. Please address." Enter 2>/dev/null || true
+        fi
+    fi
+
+    success "Added feedback to $id"
+}
