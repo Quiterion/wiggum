@@ -1,15 +1,15 @@
 # Fix Plan
 
 ## Priority 1: Core Framework
-- [ ] Create `src/ralph.sh` - main loop script
-- [ ] Create `src/init.sh` - project scaffolding
-- [ ] Create `src/tune.sh` - prompt tuning helper
+- [x] Create `src/ralph.sh` - main loop script
+- [x] Create `src/init.sh` - project scaffolding
+- [x] Create `src/tune.sh` - prompt tuning helper
 
 ## Priority 2: Templates
-- [ ] Create template for PROMPT.md
-- [ ] Create template for fix_plan.md
-- [ ] Create template for AGENT.md
-- [ ] Create template for specs/ structure
+- [x] Create template for PROMPT.md (in init.sh)
+- [x] Create template for fix_plan.md (in init.sh)
+- [x] Create template for AGENT.md (in init.sh)
+- [x] Create template for specs/ structure (in init.sh)
 
 ## Priority 3: Polish
 - [ ] Add usage documentation in README.md
@@ -17,4 +17,6 @@
 - [ ] Test full loop with real agent
 
 ## Completed
-(none yet)
+- ralph.sh: Main loop with dry-run, single iteration, configurable agent
+- init.sh: Project scaffolding with all templates
+- tune.sh: Add/list/remove "signs" for tuning Ralph
