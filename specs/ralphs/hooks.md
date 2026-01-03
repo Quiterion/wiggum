@@ -154,8 +154,32 @@ Hooks are executed by ralphs when state transitions occur:
 3. ralphs updates the ticket file
 4. ralphs executes the appropriate hook (if present)
 5. Hook runs with full context available
+6. Transition completes when hook script exits
 
-Hooks run **synchronously**. If a hook needs to do async work (like spawning an agent), it can, but the transition waits for the hook script to exit.
+### Synchronous Script, Asynchronous Agents
+
+The hook *script* runs synchronously—the transition waits for the script to exit. However, `ralphs spawn` returns immediately after creating the pane. Spawned agents run asynchronously, decoupled from the hook.
+
+```
+transition to `qa`
+       │
+       ▼
+┌─────────────────────────┐
+│ on-review-done hook     │
+│                         │
+│  ralphs spawn qa $TK_ID │───▶ (pane created, returns immediately)
+│  echo "spawned"         │              │
+│  exit 0                 │              │
+└─────────────────────────┘              │
+       │                                 ▼
+       ▼                          QA agent runs
+transition completes              (decoupled)
+```
+
+This means:
+- Hooks complete quickly (spawn + exit)
+- Agents run independently in their panes
+- No blocking on long-running agent work
 
 ---
 
