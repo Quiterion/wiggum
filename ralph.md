@@ -128,7 +128,7 @@ Generating code is now cheap, and the code that Ralph generates is within your c
 📎 **[From Design doc to code: the Groundhog AI coding assistant (and new Cursor vibecoding meta)](https://ghuntley.com/specs)**
 > Ello everyone, in the “Yes, Claude Code can decompile itself. Here’s the source code” blog post, I teased about a new meta when using Cursor. This post is a follow-up to the post below. You are using ...
 
-![Phase 1: Generate](images/The-ralph-Process.png)
+![Phase 1: Generate](images/image-3.png)
 
 📎 **[You are using Cursor AI incorrectly...](https://ghuntley.com/stdlib)**
 > 🗞️I recently shipped a follow-up blog post to this one; this post remains true. You’ll need to know this to be able to drive the N-factor of weeks of co-worker output in hours technique as detailed at...
@@ -139,7 +139,7 @@ If Ralph is building the wrong thing completely, then your specifications may be
 
 ## phase two: backpressure
 
-![Phase 2: Backpressure](images/The-ralph-Process.png)
+![Phase 2: Backpressure](images/image-4.png)
 
 This is where you need to have your engineering hat on. As code generation is easy now, what is hard is ensuring that Ralph has generated the right thing. Specific programming languages have inbuilt back pressure through their type system.
 
@@ -288,7 +288,7 @@ When I hear that argument, I question “by whom”? By humans? Why are humans t
 
 Which brings me to this point. If you wanted to be cheeky, you could probably find the codebase for CURSED on GitHub. I ask that you refrain from sharing it on social media, as it's not yet ready for launch. I want to dial this thing in so much that we have indisputable proof that AI can build a brand new programming language and program a programming language where it has no training data in its training set is possible.
 
-![CURSED as a webserver](images/CleanShot-2025-06-29-at-22.19.58_thumb.jpg)
+![CURSED as a webserver](images/image-5.png)
 *cursed as a webserver*
 
 What I'd like people to understand is that all these issues, created by Ralph, can be resolved by crafting a different series of prompts and running more loops with Ralph.
