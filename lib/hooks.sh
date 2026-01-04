@@ -28,16 +28,20 @@ run_hook() {
 
     debug "Running hook: $hook_path"
 
-    # Set up environment
-    local ticket_path="$MAIN_TICKETS_DIR/${ticket_id}.md"
+    # Set up environment - read from bare repo (source of truth)
+    # NOT from main clone which may be stale
+    local ticket_content
+    ticket_content=$(bare_read_ticket "${ticket_id}.md" 2>/dev/null)
+
     export WIGGUM_TICKET_ID="$ticket_id"
-    export WIGGUM_TICKET_PATH="$ticket_path"
+    export WIGGUM_TICKET_PATH="$MAIN_TICKETS_DIR/${ticket_id}.md"  # For backwards compat
+    export WIGGUM_TICKET_CONTENT="$ticket_content"  # Fresh content from bare repo
     export WIGGUM_SESSION
     export WIGGUM_HOOKS_DIR="$HOOKS_DIR"
     # WIGGUM_PREV_STATE and WIGGUM_NEW_STATE set by post-receive hook
-    # WIGGUM_AGENT_ID computed from ticket
-    if [[ -f "$ticket_path" ]]; then
-        WIGGUM_AGENT_ID=$(get_frontmatter_value "$ticket_path" "assigned_agent_id" 2>/dev/null)
+    # WIGGUM_AGENT_ID computed from ticket (from bare repo)
+    if [[ -n "$ticket_content" ]]; then
+        WIGGUM_AGENT_ID=$(echo "$ticket_content" | awk '/^assigned_agent_id:/{print $2; exit}')
         export WIGGUM_AGENT_ID
     fi
 

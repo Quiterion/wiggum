@@ -329,6 +329,13 @@ cmd_spawn() {
         fi
     fi
 
+    # Ensure caller's tickets are pushed to bare repo before cloning to new worktree
+    # (fixes issue where supervisor creates ticket but worker doesn't see it)
+    if [[ -d "$TICKETS_DIR/.git" ]]; then
+        debug "Syncing caller's tickets before clone"
+        ticket_sync_push "Pre-spawn sync" 2>/dev/null || true
+    fi
+
     # ALWAYS ensure .wiggum directory and fresh tickets clone exist
     # (fixes stale tickets from previous sessions when worktree is reused)
     mkdir -p "$worktree_path/.wiggum"
