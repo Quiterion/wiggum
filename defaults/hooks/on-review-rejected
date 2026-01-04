@@ -9,7 +9,7 @@
 #   WIGGUM_TICKET_PATH  - Full path to ticket file
 #   WIGGUM_PREV_STATE   - Previous state (review)
 #   WIGGUM_NEW_STATE    - New state (implement)
-#   WIGGUM_PANE         - Pane that triggered transition (reviewer)
+#   WIGGUM_AGENT_ID     - Agent that triggered transition (reviewer)
 #   WIGGUM_SESSION      - tmux session name
 #
 
@@ -17,10 +17,10 @@ TICKET_ID="${1:-$WIGGUM_TICKET_ID}"
 
 echo "[hook] Review rejected for $TICKET_ID"
 
-# Get the assigned implementer pane
-IMPL_PANE=$(grep 'assigned_pane:' "$WIGGUM_TICKET_PATH" | awk '{print $2}')
+# Get the assigned implementer agent
+IMPL_AGENT=$(grep 'assigned_agent_id:' "$WIGGUM_TICKET_PATH" | awk '{print $2}')
 
 # Ping the implementer if still running
-if [[ -n "$IMPL_PANE" ]]; then
-    wiggum ping "$IMPL_PANE" "Review feedback added to your ticket. Please address and re-submit." 2>/dev/null || true
+if [[ -n "$IMPL_AGENT" ]]; then
+    wiggum ping "$IMPL_AGENT" "Review feedback added to your ticket. Please address and re-submit." 2>/dev/null || true
 fi

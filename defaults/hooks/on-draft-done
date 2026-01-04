@@ -9,7 +9,7 @@
 #   WIGGUM_TICKET_PATH  - Full path to ticket file
 #   WIGGUM_PREV_STATE   - Previous state (implement)
 #   WIGGUM_NEW_STATE    - New state (review)
-#   WIGGUM_PANE         - Pane that triggered transition
+#   WIGGUM_AGENT_ID     - Agent that triggered transition
 #   WIGGUM_SESSION      - tmux session name
 #
 
