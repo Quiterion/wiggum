@@ -136,6 +136,40 @@ Workers don't know about other workers. They focus on their ticket.
 
 ---
 
+## Worktree Branching
+
+Each agent gets its own git worktree. The **starting branch** depends on the role:
+
+| Role | Branches From | Why |
+|------|---------------|-----|
+| `supervisor` | HEAD (main) | Orchestrates, doesn't need code changes |
+| `worker` | HEAD (main) | Implements fresh from main |
+| `reviewer` | Implementer's branch | Needs to see worker's changes |
+| `qa` | Implementer's branch | Needs to see worker's changes |
+
+When spawning a reviewer or QA agent, wiggum looks up the ticket's `assigned_agent_id` (the implementer) and branches from their branch:
+
+```
+main ─────────────────────────────
+       \
+        worker-0 ← implementer commits here
+              \
+               reviewer-0 ← sees worker's changes
+                     \
+                      qa-0 ← sees full history
+```
+
+This ensures reviewers and QA agents see the implementer's work without requiring the implementer to merge to main first.
+
+To see what the implementer changed:
+
+```bash
+git diff main..HEAD
+git log main..HEAD --oneline
+```
+
+---
+
 ## Observable vs Ephemeral Agents
 
 Not every agent invocation needs a tmux pane.

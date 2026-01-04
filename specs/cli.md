@@ -84,6 +84,10 @@ The role name directly corresponds to the prompt template file: `wiggum spawn fo
 **Flags:**
 - `--prompt PATH` — Override default prompt for this role
 
+**Worktree branching:**
+
+Each agent gets its own git worktree. Workers branch from HEAD (main). Reviewers and QA agents branch from the implementer's branch (looked up via the ticket's `assigned_agent_id`) so they can see the worker's changes. See [architecture.md](./architecture.md#worktree-branching) for details.
+
 **Examples:**
 
 ```bash

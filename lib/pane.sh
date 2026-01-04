@@ -279,8 +279,32 @@ cmd_spawn() {
     if [[ ! -d "$worktree_path" ]]; then
         info "Creating worktree for $agent_id..."
         mkdir -p "$MAIN_PROJECT_ROOT/worktrees"
-        git worktree add "$worktree_path" -b "$agent_id" --quiet 2>/dev/null ||
-            git worktree add "$worktree_path" "$agent_id" --quiet 2>/dev/null || true
+
+        # Determine the starting branch for the worktree
+        # For reviewer/QA roles, branch from the implementer's branch to see their changes
+        local start_point=""
+        if [[ "$role" != "worker" ]] && [[ "$role" != "supervisor" ]] && [[ -n "$ticket_id" ]]; then
+            local impl_agent
+            impl_agent=$(get_ticket_value "$ticket_id" "assigned_agent_id")
+            if [[ -n "$impl_agent" ]]; then
+                # Check if the implementer's branch exists
+                if git rev-parse --verify "$impl_agent" &>/dev/null; then
+                    start_point="$impl_agent"
+                    info "Branching from implementer: $impl_agent"
+                fi
+            fi
+        fi
+
+        # Create the worktree
+        if [[ -n "$start_point" ]]; then
+            # Branch from implementer's branch
+            git worktree add "$worktree_path" -b "$agent_id" "$start_point" --quiet 2>/dev/null ||
+                git worktree add "$worktree_path" "$agent_id" --quiet 2>/dev/null || true
+        else
+            # Default: branch from HEAD
+            git worktree add "$worktree_path" -b "$agent_id" --quiet 2>/dev/null ||
+                git worktree add "$worktree_path" "$agent_id" --quiet 2>/dev/null || true
+        fi
 
         # Create .wiggum directory in worktree (for tickets clone and current_prompt.md)
         mkdir -p "$worktree_path/.wiggum"
