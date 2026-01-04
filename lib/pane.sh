@@ -6,20 +6,47 @@
 # Track pane assignments in a file
 PANE_REGISTRY_FILE=".ralphs/panes.json"
 
+# Send input to a pane, handling editor mode (vim/emacs keybinds)
+# Usage: send_pane_input <session:window.pane> <message>
+# Respects RALPHS_EDITOR_MODE config: "normal" (default), "vim", "emacs"
+send_pane_input() {
+    local target="$1"
+    local message="$2"
+
+    if [[ "${RALPHS_EDITOR_MODE:-normal}" == "vim" ]]; then
+        # Vim mode: Escape to ensure normal mode, 'i' to insert, type message, Enter to submit
+        tmux send-keys -t "$target" Escape
+        sleep 0.2
+        tmux send-keys -t "$target" "i"
+        sleep 0.2
+        # Send message as literal text, then Enter to submit
+        tmux send-keys -t "$target" -l "$message"
+        tmux send-keys -t "$target" Enter
+    else
+        # Normal mode: just send message and Enter
+        tmux send-keys -t "$target" -l "$message"
+        tmux send-keys -t "$target" Enter
+    fi
+}
+
 # Get next pane index for a role
 get_next_pane_index() {
     local role="$1"
     require_project
 
-    local registry="$PROJECT_ROOT/$PANE_REGISTRY_FILE"
+    local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
     if [[ ! -f "$registry" ]]; then
         echo "0"
         return
     fi
 
     # Count existing panes with this role
+    # Note: grep -c outputs "0" and exits with 1 when no matches, so we use || true
+    # to suppress the exit code without adding extra output
     local count
-    count=$(grep -c "\"role\": \"$role\"" "$registry" 2>/dev/null || echo 0)
+    count=$(grep -c "\"role\": \"$role\"" "$registry" 2>/dev/null || true)
+    # Ensure we have a valid number
+    [[ -z "$count" || ! "$count" =~ ^[0-9]+$ ]] && count=0
     echo "$count"
 }
 
@@ -30,7 +57,7 @@ register_pane() {
     local ticket_id="${3:-}"
 
     require_project
-    local registry="$PROJECT_ROOT/$PANE_REGISTRY_FILE"
+    local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
 
     # Initialize registry if needed
     if [[ ! -f "$registry" ]]; then
@@ -57,7 +84,7 @@ unregister_pane() {
     local pane_id="$1"
     require_project
 
-    local registry="$PROJECT_ROOT/$PANE_REGISTRY_FILE"
+    local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
     [[ -f "$registry" ]] || return 0
 
     # Filter out the pane (simple grep -v approach)
@@ -74,6 +101,73 @@ unregister_pane() {
         mv "$temp" "$registry"
     fi
     rm -f "$temp"
+}
+
+# Build a prompt for an agent based on role and ticket
+build_agent_prompt() {
+    local role="$1"
+    local ticket_id="${2:-}"
+    local worktree_path="$3"
+
+    # Map role names to prompt files
+    local prompt_file="$role"
+    case "$role" in
+        impl) prompt_file="implementer" ;;
+        review) prompt_file="reviewer" ;;
+    esac
+
+    # Find the prompt template
+    local template=""
+    local prompt_path="$PROMPTS_DIR/${prompt_file}.md"
+    if [[ -f "$prompt_path" ]]; then
+        template=$(cat "$prompt_path")
+    elif [[ -f "$RALPHS_DEFAULTS/prompts/${prompt_file}.md" ]]; then
+        template=$(cat "$RALPHS_DEFAULTS/prompts/${prompt_file}.md")
+    else
+        # No template found, return minimal prompt
+        if [[ -n "$ticket_id" ]]; then
+            echo "You are a $role agent. Your ticket is $ticket_id. Read the ticket at .ralphs/tickets/${ticket_id}.md and complete the work described."
+        else
+            echo "You are a $role agent for the ralphs multi-agent system."
+        fi
+        return
+    fi
+
+    # Substitute template variables
+    local ticket_content=""
+    local relevant_specs=""
+    local project_specs=""
+    local dependencies=""
+    local feedback=""
+
+    if [[ -n "$ticket_id" ]]; then
+        local ticket_path="$TICKETS_DIR/${ticket_id}.md"
+        if [[ -f "$ticket_path" ]]; then
+            ticket_content=$(cat "$ticket_path")
+
+            # Extract feedback section if present
+            feedback=$(awk '/^## Feedback/,/^## [^F]|^$/' "$ticket_path" 2>/dev/null || true)
+
+            # Extract dependencies
+            dependencies=$(get_frontmatter_value "$ticket_path" "depends_on" || true)
+        fi
+    fi
+
+    # Gather project specs (for supervisor)
+    if [[ "$role" == "supervisor" ]] && [[ -d "$PROJECT_ROOT/specs" ]]; then
+        project_specs=$(find "$PROJECT_ROOT/specs" -name "*.md" -exec basename {} \; 2>/dev/null | head -20 | tr '\n' ', ')
+        project_specs="Available specs: $project_specs"
+    fi
+
+    # Perform substitutions
+    template="${template//\{TICKET_ID\}/$ticket_id}"
+    template="${template//\{TICKET_CONTENT\}/$ticket_content}"
+    template="${template//\{RELEVANT_SPECS\}/$relevant_specs}"
+    template="${template//\{PROJECT_SPECS\}/$project_specs}"
+    template="${template//\{DEPENDENCIES\}/$dependencies}"
+    template="${template//\{FEEDBACK\}/$feedback}"
+
+    echo "$template"
 }
 
 # Spawn an agent in a new pane
@@ -112,6 +206,8 @@ cmd_spawn() {
     # Build pane name
     local pane_index
     pane_index=$(get_next_pane_index "$role")
+    # Strip any whitespace/newlines that might have crept in
+    pane_index="${pane_index//[$'\t\r\n ']/}"
     local pane_name="${role}-${pane_index}"
 
     # Build the agent command
@@ -153,9 +249,23 @@ cmd_spawn() {
     # Change to worktree directory
     tmux send-keys -t "$RALPHS_SESSION:main.$new_pane" "cd '$worktree_path'" Enter
 
-    # Run the agent command
-    tmux send-keys -t "$RALPHS_SESSION:main.$new_pane" "# ralphs: $pane_name${ticket_id:+ ($ticket_id)}" Enter
+    # Build the agent prompt
+    local prompt
+    prompt=$(build_agent_prompt "$role" "$ticket_id" "$worktree_path")
+
+    # Write prompt to a file in the worktree for the agent to read
+    local prompt_file="$worktree_path/.ralphs/current_prompt.md"
+    echo "$prompt" > "$prompt_file"
+
+    # Start the agent
     tmux send-keys -t "$RALPHS_SESSION:main.$new_pane" "$agent_cmd" Enter
+
+    # Wait for agent to initialize (give it time to show welcome banner)
+    sleep 2
+
+    # Send the initial prompt using vim-safe input
+    local initial_msg="Please read your role instructions from .ralphs/current_prompt.md and begin your work. Your role is: $role${ticket_id:+, assigned ticket: $ticket_id}"
+    send_pane_input "$RALPHS_SESSION:main.$new_pane" "$initial_msg"
 
     # Apply layout
     tmux select-layout -t "$RALPHS_SESSION:main" "$RALPHS_LAYOUT" 2>/dev/null || true
@@ -206,7 +316,7 @@ cmd_list() {
         exit "$EXIT_SESSION_NOT_FOUND"
     fi
 
-    local registry="$PROJECT_ROOT/$PANE_REGISTRY_FILE"
+    local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
 
     case "$format" in
         json)
@@ -226,24 +336,39 @@ cmd_list() {
             printf "${BOLD}%-12s %-12s %-12s %-10s${NC}\n" "PANE" "ROLE" "TICKET" "UPTIME"
             echo "------------------------------------------------"
 
-            if [[ -f "$registry" ]]; then
-                # Parse each entry (simple approach)
-                while IFS= read -r line; do
-                    local pane
-    pane=$(echo "$line" | grep -o '"pane": "[^"]*"' | cut -d'"' -f4)
-                    local role
-    role=$(echo "$line" | grep -o '"role": "[^"]*"' | cut -d'"' -f4)
-                    local ticket
-    ticket=$(echo "$line" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
-                    local started
-    started=$(echo "$line" | grep -o '"started_at": "[^"]*"' | cut -d'"' -f4)
-
-                    [[ -z "$pane" ]] && continue
-
-                    local uptime
-    uptime=$(duration_since "$started")
+            if [[ -f "$registry" ]] && command -v jq &>/dev/null; then
+                # Use jq for proper JSON parsing
+                local count
+                count=$(jq 'length' "$registry")
+                for ((i=0; i<count; i++)); do
+                    local pane role ticket started uptime
+                    pane=$(jq -r ".[$i].pane" "$registry")
+                    role=$(jq -r ".[$i].role" "$registry")
+                    ticket=$(jq -r ".[$i].ticket // empty" "$registry")
+                    started=$(jq -r ".[$i].started_at" "$registry")
+                    uptime=$(duration_since "$started")
                     printf "%-12s %-12s %-12s %-10s\n" "$pane" "$role" "${ticket:-—}" "$uptime"
-                done < <(tr ',' '\n' < "$registry")
+                done
+            elif [[ -f "$registry" ]]; then
+                # Fallback: parse JSON without jq (less reliable)
+                warn "jq not found, using basic parsing"
+                # Extract each object by matching balanced braces
+                local content
+                content=$(cat "$registry")
+                while [[ "$content" =~ \{([^}]+)\} ]]; do
+                    local obj="${BASH_REMATCH[1]}"
+                    local pane role ticket started uptime
+                    pane=$(echo "$obj" | grep -o '"pane"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
+                    role=$(echo "$obj" | grep -o '"role"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
+                    ticket=$(echo "$obj" | grep -o '"ticket"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
+                    started=$(echo "$obj" | grep -o '"started_at"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
+                    if [[ -n "$pane" ]]; then
+                        uptime=$(duration_since "$started")
+                        printf "%-12s %-12s %-12s %-10s\n" "$pane" "$role" "${ticket:-—}" "$uptime"
+                    fi
+                    # Remove processed object from content
+                    content="${content#*\}}"
+                done
             fi
             echo ""
             ;;
@@ -282,7 +407,7 @@ cmd_kill() {
     fi
 
     # Find pane in registry
-    local registry="$PROJECT_ROOT/$PANE_REGISTRY_FILE"
+    local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
     local ticket_id=""
 
     if [[ -f "$registry" ]]; then
@@ -367,8 +492,8 @@ cmd_ping() {
         target_pane="$pane_id"
     fi
 
-    # Send the message
-    tmux send-keys -t "$RALPHS_SESSION:main.$target_pane" "# $message" Enter
+    # Send the message using vim-safe input
+    send_pane_input "$RALPHS_SESSION:main.$target_pane" "$message"
 
     success "Pinged $pane_id"
 }
@@ -378,7 +503,7 @@ cmd_has_capacity() {
     require_project
     load_config
 
-    local registry="$PROJECT_ROOT/$PANE_REGISTRY_FILE"
+    local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
     local current=0
 
     if [[ -f "$registry" ]]; then

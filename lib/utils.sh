@@ -109,17 +109,40 @@ get_project_root() {
     return 1
 }
 
+# Get main project root (handles worktrees - returns parent of worktrees/)
+# Use this for shared resources: config.sh, panes.json, hooks, prompts
+get_main_project_root() {
+    local project_root
+    if ! project_root=$(get_project_root "$@"); then
+        return 1
+    fi
+    # If we're in a worktree, go up to the main project
+    if [[ "$project_root" == */worktrees/* ]]; then
+        project_root="${project_root%/worktrees/*}"
+    fi
+    echo "$project_root"
+}
+
 # Ensure we're in a ralphs project
 require_project() {
     if ! PROJECT_ROOT=$(get_project_root); then
         error "Not in a ralphs project. Run 'ralphs init' first."
         exit "$EXIT_ERROR"
     fi
+
+    # Main project root (for shared resources like config, panes.json)
+    MAIN_PROJECT_ROOT=$(get_main_project_root)
+    MAIN_RALPHS_DIR="$MAIN_PROJECT_ROOT/.ralphs"
+
+    # Current context (may be worktree)
     RALPHS_DIR="$PROJECT_ROOT/.ralphs"
     TICKETS_DIR="$RALPHS_DIR/tickets"
-    HOOKS_DIR="$RALPHS_DIR/hooks"
-    PROMPTS_DIR="$RALPHS_DIR/prompts"
-    export PROJECT_ROOT RALPHS_DIR TICKETS_DIR HOOKS_DIR PROMPTS_DIR
+
+    # Shared resources come from main project
+    HOOKS_DIR="$MAIN_RALPHS_DIR/hooks"
+    PROMPTS_DIR="$MAIN_RALPHS_DIR/prompts"
+
+    export PROJECT_ROOT MAIN_PROJECT_ROOT RALPHS_DIR MAIN_RALPHS_DIR TICKETS_DIR HOOKS_DIR PROMPTS_DIR
 }
 
 # Match partial ticket ID
