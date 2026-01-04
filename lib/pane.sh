@@ -276,7 +276,11 @@ cmd_spawn() {
 
     # Create a worktree for the agent (always under main project)
     local worktree_path="$MAIN_PROJECT_ROOT/worktrees/$agent_id"
-    if [[ ! -d "$worktree_path" ]]; then
+    local worktree_existed=false
+    if [[ -d "$worktree_path" ]]; then
+        worktree_existed=true
+        debug "Reusing existing worktree for $agent_id"
+    else
         info "Creating worktree for $agent_id..."
         mkdir -p "$MAIN_PROJECT_ROOT/worktrees"
 
@@ -284,8 +288,11 @@ cmd_spawn() {
         # For reviewer/QA roles, branch from the implementer's branch to see their changes
         local start_point=""
         if [[ "$role" != "worker" ]] && [[ "$role" != "supervisor" ]] && [[ -n "$ticket_id" ]]; then
+            # Read assigned_agent_id from bare repo (source of truth)
             local impl_agent
-            impl_agent=$(get_ticket_value "$ticket_id" "assigned_agent_id")
+            local ticket_content
+            ticket_content=$(bare_read_ticket "${ticket_id}.md" 2>/dev/null)
+            impl_agent=$(echo "$ticket_content" | awk '/^assigned_agent_id:/{print $2; exit}')
             if [[ -n "$impl_agent" ]]; then
                 # Check if the implementer's branch exists
                 if git rev-parse --verify "$impl_agent" &>/dev/null; then
@@ -296,26 +303,43 @@ cmd_spawn() {
         fi
 
         # Create the worktree
+        local worktree_created=false
         if [[ -n "$start_point" ]]; then
             # Branch from implementer's branch
-            git worktree add "$worktree_path" -b "$agent_id" "$start_point" --quiet 2>/dev/null ||
-                git worktree add "$worktree_path" "$agent_id" --quiet 2>/dev/null || true
+            if git worktree add "$worktree_path" -b "$agent_id" "$start_point" --quiet 2>&1 ||
+               git worktree add "$worktree_path" "$agent_id" --quiet 2>&1; then
+                worktree_created=true
+            fi
         else
             # Default: branch from HEAD
-            git worktree add "$worktree_path" -b "$agent_id" --quiet 2>/dev/null ||
-                git worktree add "$worktree_path" "$agent_id" --quiet 2>/dev/null || true
+            if git worktree add "$worktree_path" -b "$agent_id" --quiet 2>&1 ||
+               git worktree add "$worktree_path" "$agent_id" --quiet 2>&1; then
+                worktree_created=true
+            fi
         fi
 
-        # Create .wiggum directory in worktree (for tickets clone and current_prompt.md)
-        mkdir -p "$worktree_path/.wiggum"
-
-        # Clone tickets repo into worktree (optional - may not have bare repo)
-        clone_tickets_to_worktree "$worktree_path/.wiggum" || true
+        if [[ "$worktree_created" != "true" ]]; then
+            error "Failed to create worktree for $agent_id"
+            exit "$EXIT_ERROR"
+        fi
 
         # Symlink Claude Code settings from main project
-        if [[ -d "$MAIN_PROJECT_ROOT/.claude" ]] && [[ ! -e "$worktree_path/.claude" ]]; then
+        if [[ -d "$MAIN_PROJECT_ROOT/.claude" ]] && [[ -d "$worktree_path" ]] && [[ ! -e "$worktree_path/.claude" ]]; then
             ln -s "$MAIN_PROJECT_ROOT/.claude" "$worktree_path/.claude"
         fi
+    fi
+
+    # ALWAYS ensure .wiggum directory and fresh tickets clone exist
+    # (fixes stale tickets from previous sessions when worktree is reused)
+    mkdir -p "$worktree_path/.wiggum"
+    if [[ "$worktree_existed" == "true" ]] && [[ -d "$worktree_path/.wiggum/tickets/.git" ]]; then
+        # Worktree exists with tickets clone - pull latest
+        debug "Refreshing tickets in existing worktree"
+        git -C "$worktree_path/.wiggum/tickets" fetch origin --quiet 2>/dev/null || true
+        git -C "$worktree_path/.wiggum/tickets" reset --hard origin/main --quiet 2>/dev/null || true
+    else
+        # Fresh clone needed
+        clone_tickets_to_worktree "$worktree_path/.wiggum" || true
     fi
 
     # Create new pane
@@ -364,9 +388,13 @@ cmd_spawn() {
     register_pane "$agent_id" "$role" "$tmux_pane_id"
 
     # Start work on ticket if it's ready (assigning a ticket to any agent starts it)
+    # IMPORTANT: Read state from BARE REPO (source of truth) to avoid race conditions
+    # with stale clones. See: main clone sync bug.
     if [[ -n "$ticket_id" ]]; then
         local current_state
-        current_state=$(get_ticket_value "$ticket_id" "state")
+        local ticket_content
+        ticket_content=$(bare_read_ticket "${ticket_id}.md")
+        current_state=$(echo "$ticket_content" | awk '/^state:/{print $2; exit}')
 
         if [[ "$current_state" == "ready" ]]; then
             # Use ticket functions instead of direct frontmatter manipulation

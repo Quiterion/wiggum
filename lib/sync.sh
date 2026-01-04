@@ -202,6 +202,13 @@ TICKETS_GIT="$(cd "$(dirname "$0")/.." && pwd)"
 MAIN_WIGGUM_DIR="$(dirname "$TICKETS_GIT")"
 PROJECT_ROOT="$(dirname "$MAIN_WIGGUM_DIR")"
 
+# Log file for hook errors
+HOOK_LOG="$MAIN_WIGGUM_DIR/hook.log"
+
+log_error() {
+    echo "[$(date -Iseconds)] $*" >> "$HOOK_LOG"
+}
+
 # Find wiggum binary
 WIGGUM_BIN=$(command -v wiggum 2>/dev/null || echo "$PROJECT_ROOT/bin/wiggum")
 
@@ -224,24 +231,24 @@ while read -r oldrev newrev refname; do
         export WIGGUM_PREV_STATE="$old_state"
         export WIGGUM_NEW_STATE="$new_state"
 
-        # Trigger appropriate hook via wiggum (background to avoid blocking)
+        # Trigger appropriate hook via wiggum (background, log errors)
         case "$new_state" in
             review)
-                (cd "$PROJECT_ROOT" && "$WIGGUM_BIN" hook run on-draft-done "$ticket_id" 2>/dev/null &)
+                (cd "$PROJECT_ROOT" && "$WIGGUM_BIN" hook run on-draft-done "$ticket_id" 2>>"$HOOK_LOG" &)
                 ;;
             qa)
-                (cd "$PROJECT_ROOT" && "$WIGGUM_BIN" hook run on-review-done "$ticket_id" 2>/dev/null &)
+                (cd "$PROJECT_ROOT" && "$WIGGUM_BIN" hook run on-review-done "$ticket_id" 2>>"$HOOK_LOG" &)
                 ;;
             in-progress)
                 if [[ "$old_state" == "review" ]]; then
-                    (cd "$PROJECT_ROOT" && "$WIGGUM_BIN" hook run on-review-rejected "$ticket_id" 2>/dev/null &)
+                    (cd "$PROJECT_ROOT" && "$WIGGUM_BIN" hook run on-review-rejected "$ticket_id" 2>>"$HOOK_LOG" &)
                 elif [[ "$old_state" == "qa" ]]; then
-                    (cd "$PROJECT_ROOT" && "$WIGGUM_BIN" hook run on-qa-rejected "$ticket_id" 2>/dev/null &)
+                    (cd "$PROJECT_ROOT" && "$WIGGUM_BIN" hook run on-qa-rejected "$ticket_id" 2>>"$HOOK_LOG" &)
                 fi
                 ;;
             done)
-                (cd "$PROJECT_ROOT" && "$WIGGUM_BIN" hook run on-qa-done "$ticket_id" 2>/dev/null &)
-                (cd "$PROJECT_ROOT" && "$WIGGUM_BIN" hook run on-close "$ticket_id" 2>/dev/null &)
+                (cd "$PROJECT_ROOT" && "$WIGGUM_BIN" hook run on-qa-done "$ticket_id" 2>>"$HOOK_LOG" &)
+                (cd "$PROJECT_ROOT" && "$WIGGUM_BIN" hook run on-close "$ticket_id" 2>>"$HOOK_LOG" &)
                 ;;
         esac
     done
@@ -250,7 +257,16 @@ done
 # Update main clone for observability commands
 MAIN_TICKETS="$MAIN_WIGGUM_DIR/tickets"
 if [[ -d "$MAIN_TICKETS/.git" ]]; then
-    git -C "$MAIN_TICKETS" pull --rebase --quiet 2>/dev/null || true
+    # Check for uncommitted changes that would block pull
+    if ! git -C "$MAIN_TICKETS" diff --quiet 2>/dev/null || \
+       ! git -C "$MAIN_TICKETS" diff --cached --quiet 2>/dev/null; then
+        log_error "MAIN CLONE DIRTY: uncommitted changes in $MAIN_TICKETS - skipping auto-pull"
+        log_error "Run: git -C $MAIN_TICKETS status"
+    else
+        if ! git -C "$MAIN_TICKETS" pull --rebase --quiet 2>&1; then
+            log_error "MAIN CLONE PULL FAILED: git -C $MAIN_TICKETS pull --rebase"
+        fi
+    fi
 fi
 HOOK
     chmod +x "$hooks_dir/post-receive"
@@ -296,12 +312,25 @@ ticket_sync_pull() {
     # Only sync if we have a clone
     [[ ! -d "$TICKETS_DIR/.git" ]] && return 0
 
-    git -C "$TICKETS_DIR" fetch origin --quiet 2>/dev/null || return 0
-    git -C "$TICKETS_DIR" rebase origin/main --quiet 2>/dev/null || \
-        git -C "$TICKETS_DIR" rebase origin/master --quiet 2>/dev/null || {
-        warn "Ticket sync conflict - resolve manually with: git -C $TICKETS_DIR rebase --continue"
+    # Check for uncommitted changes that would block rebase
+    if ! git -C "$TICKETS_DIR" diff --quiet 2>/dev/null || \
+       ! git -C "$TICKETS_DIR" diff --cached --quiet 2>/dev/null; then
+        warn "Ticket sync pull blocked: uncommitted changes in $TICKETS_DIR"
+        warn "Run: git -C $TICKETS_DIR status"
         return 1
-    }
+    fi
+
+    if ! git -C "$TICKETS_DIR" fetch origin --quiet 2>&1; then
+        warn "Ticket sync fetch failed for $TICKETS_DIR"
+        return 1
+    fi
+
+    if ! git -C "$TICKETS_DIR" rebase origin/main --quiet 2>&1; then
+        if ! git -C "$TICKETS_DIR" rebase origin/master --quiet 2>&1; then
+            warn "Ticket sync rebase failed - resolve manually: git -C $TICKETS_DIR rebase --continue"
+            return 1
+        fi
+    fi
 }
 
 # Push ticket changes to origin
@@ -316,14 +345,30 @@ ticket_sync_push() {
 
     local message="${1:-Ticket update}"
 
-    # Stage and commit if there are changes
-    git -C "$TICKETS_DIR" add -A 2>/dev/null || true
-    git -C "$TICKETS_DIR" diff --cached --quiet 2>/dev/null || \
-        git -c commit.gpgsign=false -C "$TICKETS_DIR" commit -m "$message" --quiet 2>/dev/null || true
+    # Stage changes
+    if ! git -C "$TICKETS_DIR" add -A 2>&1; then
+        warn "Ticket sync: git add failed in $TICKETS_DIR"
+        return 1
+    fi
+
+    # Commit if there are staged changes
+    if ! git -C "$TICKETS_DIR" diff --cached --quiet 2>/dev/null; then
+        if ! git -c commit.gpgsign=false -C "$TICKETS_DIR" commit -m "$message" --quiet 2>&1; then
+            warn "Ticket sync: commit failed in $TICKETS_DIR"
+            return 1
+        fi
+    fi
 
     # Push to origin
-    git -C "$TICKETS_DIR" push origin main --quiet 2>/dev/null || \
-        git -C "$TICKETS_DIR" push origin master --quiet 2>/dev/null || true
+    local push_output
+    if ! push_output=$(git -C "$TICKETS_DIR" push origin main 2>&1); then
+        if ! push_output=$(git -C "$TICKETS_DIR" push origin master 2>&1); then
+            warn "Ticket sync: push failed in $TICKETS_DIR"
+            warn "Push output: $push_output"
+            warn "Hint: origin may have diverged. Try: git -C $TICKETS_DIR pull --rebase && git -C $TICKETS_DIR push"
+            return 1
+        fi
+    fi
 }
 
 # Full sync (pull then push)
