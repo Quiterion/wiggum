@@ -9,128 +9,144 @@ When multiple agents work in parallel (each in their own git worktree), they nee
 ## Architecture
 
 ```
-proj/
+proj/                                  ← supervisor lives here (main project worktree)
 ├── .ralphs/
-│   ├── tickets.git/              ← bare repo (origin), hooks live here
+│   ├── tickets/                       ← git repo, IS the origin
+│   │   ├── .git/
+│   │   │   ├── config                 ← receive.denyCurrentBranch=updateInstead
+│   │   │   └── hooks/
+│   │   │       ├── pre-receive        ← validates state transitions
+│   │   │       └── post-receive       ← triggers ralphs hooks
+│   │   └── *.md                       ← ticket files
 │   ├── config.sh
 │   ├── hooks/
 │   └── prompts/
-├── .gitmodules                   ← defines tickets submodule
-│
-├── (main worktree - supervisor)
-│   └── .ralphs/tickets/          ← submodule checkout, main branch
-│
+├── .gitignore                         ← includes .ralphs/tickets/
+├── src/...
 └── worktrees/
     ├── impl-0/
-    │   └── .ralphs/tickets/      ← submodule checkout, impl-0 branch
+    │   └── .ralphs/
+    │       └── tickets/               ← clone, remote=../../.ralphs/tickets
     └── reviewer-0/
-        └── .ralphs/tickets/      ← submodule checkout, reviewer-0 branch
+        └── .ralphs/
+            └── tickets/               ← clone, remote=../../.ralphs/tickets
 ```
 
 ### Key Principles
 
 1. **Tickets repo is separate from project repo** - ticket churn doesn't pollute project history
-2. **Bare repo is the origin** - lives at `.ralphs/tickets.git`, hooks enforce rules here
-3. **Supervisor owns main branch** - authoritative state, merges worker updates
-4. **Workers own feature branches** - push changes to their branch, supervisor merges
-5. **Submodule per worktree** - each worktree has its own tickets checkout
+2. **Supervisor's tickets IS the origin** - not a bare repo, just a regular repo with special config
+3. **Workers clone and push directly** - no intermediate branches, no supervisor merge step
+4. **Hooks fire on origin** - pre-receive validates, post-receive triggers actions
+5. **Nested repo, not submodule** - simpler setup, tracked via `.gitignore`
 
-## Project Identity
+## How It Works
 
-Projects are identified by a hash of their git remote URL (stable across machines) or absolute path (fallback):
+### Push to non-bare repo
 
-```bash
-get_project_id() {
-    local remote
-    remote=$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null)
-    if [[ -n "$remote" ]]; then
-        echo "$remote" | sha256sum | cut -c1-12
-    else
-        echo "$PROJECT_ROOT" | sha256sum | cut -c1-12
-    fi
-}
+Normally git refuses to push to a checked-out branch. We use `receive.denyCurrentBranch=updateInstead` which:
+- Accepts the push
+- Automatically updates the working tree
+- Keeps supervisor's view always current
+
+### Worker push flow
+
 ```
-
-This ID is used for:
-- Cross-project ticket isolation
-- Potential future: central ticket index at `~/.claude/ralphs/`
+impl-0: edits ticket, commits, pushes to origin (supervisor's repo)
+            ↓
+    pre-receive: validates state transition
+            ↓
+    push accepted, supervisor's working tree updates
+            ↓
+    post-receive: triggers ralphs hooks (spawn reviewer, etc.)
+```
 
 ## Initialization
 
-### First-time init (creates supervisor)
+### First-time init (creates supervisor environment)
 
 ```bash
 ralphs init [--session NAME]
 ```
 
-1. Create bare tickets repo at `.ralphs/tickets.git`
-2. Install pre-receive and post-receive hooks on bare repo
-3. Initialize submodule: `git submodule add ./.ralphs/tickets.git .ralphs/tickets`
-4. Create initial commit in tickets repo (empty or with README)
-5. Mark this worktree as supervisor in config
+1. Create tickets repo at `.ralphs/tickets/`:
+   ```bash
+   git init .ralphs/tickets
+   git -C .ralphs/tickets config receive.denyCurrentBranch updateInstead
+   ```
+2. Install pre-receive and post-receive hooks
+3. Create initial commit (empty README or .gitkeep)
+4. Add `.ralphs/tickets/` to project's `.gitignore`
+5. Mark this as supervisor: `RALPHS_IS_SUPERVISOR=true` in config
 6. Create tmux session, etc. (existing behavior)
 
-### Spawning workers (creates worktree + submodule checkout)
+### Spawning workers (creates worktree + tickets clone)
 
 ```bash
 ralphs spawn <role> [--ticket ID]
 ```
 
-1. Create project worktree: `git worktree add worktrees/<pane-name> -b <pane-name>`
-2. Initialize submodule in worktree: `git -C worktrees/<pane-name> submodule update --init`
-3. Create ticket branch for worker: `git -C worktrees/<pane-name>/.ralphs/tickets checkout -b <pane-name>`
-4. Register pane, start agent, etc. (existing behavior)
+1. Create project worktree:
+   ```bash
+   git worktree add worktrees/<pane-name> -b <pane-name>
+   ```
+2. Create worker's .ralphs directory structure
+3. Clone tickets repo into worktree:
+   ```bash
+   git clone ../../.ralphs/tickets worktrees/<pane-name>/.ralphs/tickets
+   ```
+4. Mark as worker: `RALPHS_IS_SUPERVISOR=false` in worktree's config
+5. Register pane, start agent, etc. (existing behavior)
 
 ## Synchronization
 
 ### Worker → Origin (push)
 
-Workers commit and push their ticket changes to their own branch:
+Workers commit and push directly to main:
 
 ```bash
 # In worker's .ralphs/tickets/
 git add -A
-git commit -m "Update tk-1234: implement → review"
-git push origin impl-0
-```
-
-### Origin hooks validate and trigger
-
-**pre-receive hook** (on `.ralphs/tickets.git`):
-- Parses incoming ticket changes
-- Validates state transitions against state machine
-- Rejects invalid pushes with helpful error message
-- Allows free-form body edits (only validates frontmatter)
-
-**post-receive hook** (on `.ralphs/tickets.git`):
-- Detects state transitions
-- Triggers appropriate ralphs hooks (on-implement-done, etc.)
-- Optionally notifies supervisor to merge
-
-### Supervisor merges to main
-
-Supervisor periodically (or on notification) merges worker branches:
-
-```bash
-# In supervisor's .ralphs/tickets/
-git fetch origin
-git merge origin/impl-0 --no-edit
+git commit -m "Transition tk-1234: implement → review"
 git push origin main
 ```
 
-Or automated via post-receive hook that signals supervisor.
+- pre-receive validates the state transition
+- If invalid, push is rejected with helpful error
+- If valid, supervisor's working tree auto-updates
+- post-receive triggers appropriate hooks
 
 ### Worker ← Origin (pull)
 
-Workers pull latest main before operations:
+Workers pull before operations:
 
 ```bash
 # In worker's .ralphs/tickets/
-git fetch origin main
-git rebase origin/main
+git pull --rebase origin main
 ```
 
 ## Ticket Commands with Git Plumbing
+
+### Sync helpers
+
+```bash
+ticket_sync_pull() {
+    [[ "$RALPHS_AUTO_SYNC" == "false" ]] && return 0
+    git -C "$TICKETS_DIR" fetch origin --quiet
+    git -C "$TICKETS_DIR" rebase origin/main --quiet 2>/dev/null || {
+        warn "Ticket sync conflict - please resolve manually"
+        return 1
+    }
+}
+
+ticket_sync_push() {
+    [[ "$RALPHS_AUTO_SYNC" == "false" ]] && return 0
+    local message="$1"
+    git -C "$TICKETS_DIR" add -A
+    git -C "$TICKETS_DIR" commit -m "$message" --quiet 2>/dev/null || true
+    git -C "$TICKETS_DIR" push origin main --quiet
+}
+```
 
 ### Read operations (pull first)
 
@@ -168,31 +184,6 @@ ticket_create() {
 }
 ```
 
-### Sync helpers
-
-```bash
-ticket_sync_pull() {
-    git -C "$TICKETS_DIR" fetch origin --quiet
-    git -C "$TICKETS_DIR" rebase origin/main --quiet 2>/dev/null || {
-        warn "Ticket sync conflict - please resolve manually"
-        return 1
-    }
-}
-
-ticket_sync_push() {
-    local message="$1"
-    git -C "$TICKETS_DIR" add -A
-    git -C "$TICKETS_DIR" commit -m "$message" --quiet 2>/dev/null || true
-    git -C "$TICKETS_DIR" push origin HEAD --quiet
-}
-
-ticket_sync() {
-    # Manual full sync
-    ticket_sync_pull
-    ticket_sync_push "Manual sync"
-}
-```
-
 ## Supervisor Detection
 
 ```bash
@@ -202,20 +193,21 @@ is_supervisor() {
 }
 ```
 
-Set during init:
-```bash
-# In ralphs init
-echo "RALPHS_IS_SUPERVISOR=true" >> "$RALPHS_DIR/config.sh"
+Supervisor detection is also implicit: if there's no remote configured, you're the origin.
 
-# In ralphs spawn (worker worktree)
-echo "RALPHS_IS_SUPERVISOR=false" >> "$worktree/.ralphs/config.sh"
+```bash
+is_origin() {
+    local remote
+    remote=$(git -C "$TICKETS_DIR" remote get-url origin 2>/dev/null)
+    [[ -z "$remote" ]]
+}
 ```
 
 ## Origin Hooks
 
 ### pre-receive (validation)
 
-Location: `.ralphs/tickets.git/hooks/pre-receive`
+Location: `.ralphs/tickets/.git/hooks/pre-receive`
 
 ```bash
 #!/bin/bash
@@ -250,7 +242,7 @@ while read oldrev newrev refname; do
         fi
         new_state=$(git show "$newrev:$file" | awk '/^state:/{print $2}')
 
-        # Skip if state unchanged
+        # Skip if state unchanged (body-only edit)
         [[ "$old_state" == "$new_state" ]] && continue
 
         # New tickets start at ready
@@ -268,6 +260,7 @@ while read oldrev newrev refname; do
             echo "error: invalid transition '$old_state' → '$new_state'"
             echo "hint: file: $file"
             echo "hint: allowed from '$old_state': ${TRANSITIONS[$old_state]}"
+            echo "hint: use 'ralphs ticket transition <id> <state>'"
             exit 1
         fi
     done
@@ -278,25 +271,28 @@ exit 0
 
 ### post-receive (hooks trigger)
 
-Location: `.ralphs/tickets.git/hooks/post-receive`
+Location: `.ralphs/tickets/.git/hooks/post-receive`
 
 ```bash
 #!/bin/bash
 
-# Find project root (bare repo is at .ralphs/tickets.git)
-RALPHS_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+# Find project root (.git/hooks -> .git -> tickets -> .ralphs -> proj)
+TICKETS_GIT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+TICKETS_DIR="$(dirname "$TICKETS_GIT_DIR")"
+RALPHS_DIR="$(dirname "$TICKETS_DIR")"
 PROJECT_ROOT="$(dirname "$RALPHS_DIR")"
 
-# Source ralphs utilities
-source "$PROJECT_ROOT/path/to/ralphs/lib/utils.sh"
-source "$PROJECT_ROOT/path/to/ralphs/lib/hooks.sh"
+# Source ralphs if available
+if [[ -f "$RALPHS_DIR/config.sh" ]]; then
+    source "$RALPHS_DIR/config.sh"
+fi
+
+# Find ralphs installation
+RALPHS_BIN=$(command -v ralphs 2>/dev/null || echo "$PROJECT_ROOT/bin/ralphs")
 
 while read oldrev newrev refname; do
     # Skip deletions
     [[ "$newrev" == "0000000000000000000000000000000000000000" ]] && continue
-
-    # Only trigger hooks for main branch updates
-    [[ "$refname" == "refs/heads/main" ]] || continue
 
     # Check each changed ticket
     for file in $(git diff --name-only "$oldrev" "$newrev" 2>/dev/null); do
@@ -308,24 +304,24 @@ while read oldrev newrev refname; do
 
         [[ "$old_state" == "$new_state" ]] && continue
 
-        # Determine which hook to run
+        # Trigger appropriate hook via ralphs
         case "$new_state" in
             review)
-                run_hook "on-implement-done" "$ticket_id"
+                "$RALPHS_BIN" hook run on-implement-done "$ticket_id" 2>/dev/null || true
                 ;;
             qa)
-                run_hook "on-review-done" "$ticket_id"
+                "$RALPHS_BIN" hook run on-review-done "$ticket_id" 2>/dev/null || true
                 ;;
             implement)
                 if [[ "$old_state" == "review" ]]; then
-                    run_hook "on-review-rejected" "$ticket_id"
+                    "$RALPHS_BIN" hook run on-review-rejected "$ticket_id" 2>/dev/null || true
                 elif [[ "$old_state" == "qa" ]]; then
-                    run_hook "on-qa-rejected" "$ticket_id"
+                    "$RALPHS_BIN" hook run on-qa-rejected "$ticket_id" 2>/dev/null || true
                 fi
                 ;;
             done)
-                run_hook "on-qa-done" "$ticket_id"
-                run_hook "on-close" "$ticket_id"
+                "$RALPHS_BIN" hook run on-qa-done "$ticket_id" 2>/dev/null || true
+                "$RALPHS_BIN" hook run on-close "$ticket_id" 2>/dev/null || true
                 ;;
         esac
     done
@@ -337,25 +333,25 @@ done
 ### Automatic (rebase)
 
 Most conflicts resolve automatically with rebase since:
-- Each worker edits different tickets (claimed/assigned)
-- Body edits are append-mostly (feedback, notes)
+- Each worker typically edits different tickets (claimed/assigned to them)
+- Body edits are append-mostly (feedback, notes accumulate)
 
 ### Manual escalation
 
 If rebase fails:
 1. Worker's sync command warns: "Ticket sync conflict"
-2. Worker can manually resolve or escalate to supervisor
-3. Supervisor resolves on main branch
+2. Worker can manually resolve: `git -C .ralphs/tickets rebase --continue`
+3. Or abort and escalate to supervisor
 
 ### Merge strategy for body content
 
 Configure tickets repo to use union merge for markdown:
 ```bash
-# .ralphs/tickets.git/info/attributes
+# .ralphs/tickets/.git/info/attributes
 *.md merge=union
 ```
 
-This appends conflicting additions rather than marking conflicts.
+This appends conflicting additions rather than creating conflict markers.
 
 ## CLI Changes
 
@@ -370,8 +366,8 @@ ralphs ticket sync --push       # Push only
 ### Modified commands
 
 All ticket commands gain implicit sync:
-- `ticket show`, `ticket list`, `ticket ready`, `ticket blocked` → pull first
-- `ticket create`, `ticket transition`, `ticket claim`, `ticket feedback` → pull, act, push
+- Read ops (`show`, `list`, `ready`, `blocked`) → pull first
+- Write ops (`create`, `transition`, `claim`, `feedback`) → pull, act, push
 
 ### Flags
 
@@ -385,7 +381,6 @@ New config options in `.ralphs/config.sh`:
 
 ```bash
 RALPHS_IS_SUPERVISOR=true|false     # Is this the supervisor worktree?
-RALPHS_TICKET_BRANCH=main|impl-0    # Which branch this worktree uses
 RALPHS_AUTO_SYNC=true|false         # Auto-sync on ticket operations (default: true)
 ```
 
@@ -397,10 +392,10 @@ For existing ralphs projects without distributed tickets:
 ralphs migrate-tickets
 ```
 
-1. Creates `.ralphs/tickets.git` bare repo
-2. Moves existing `.ralphs/tickets/*.md` into repo
-3. Sets up submodule
-4. Installs hooks
+1. Initializes git in existing `.ralphs/tickets/` directory
+2. Configures `receive.denyCurrentBranch=updateInstead`
+3. Installs hooks
+4. Creates initial commit
 
 ## Edge Cases
 
@@ -408,27 +403,35 @@ ralphs migrate-tickets
 
 With `RALPHS_AUTO_SYNC=false` or `--no-sync`:
 - Operations work locally
-- User must manually sync when online
-
-### Supervisor unavailable
-
-Workers can still:
-- Read their local ticket state
-- Make local changes
-- Push to their branch
-
-They cannot:
-- Get updates from other workers (need supervisor to merge)
-- Trigger hooks (run on origin)
+- User must manually sync when online: `ralphs ticket sync`
 
 ### Concurrent transitions
 
 If two workers try to transition the same ticket:
-1. First push succeeds
+1. First push succeeds, hooks fire
 2. Second push fails pre-receive validation (state already changed)
-3. Second worker pulls, sees new state, adjusts
+3. Second worker sees error, pulls to get new state, adjusts
+
+### Supervisor operations
+
+Supervisor edits tickets directly (no push needed - it IS the origin):
+```bash
+# Supervisor's ticket operations work locally
+# Other workers see changes on next pull
+```
+
+For supervisor changes to trigger hooks, it commits and the post-receive logic runs on commit (or a post-commit hook mirrors the logic).
 
 ## Future Considerations
+
+### Remote ticket origins
+
+For distributed teams, the origin could be a hosted repo:
+```bash
+ralphs init --ticket-remote git@github.com:org/project-tickets.git
+```
+
+Workers and supervisor all clone from/push to the remote.
 
 ### Central ticket index
 
@@ -450,11 +453,4 @@ Tickets could reference tickets in other projects:
 depends_on:
   - tk-1234                    # Same project
   - proj:abc123:tk-5678        # Other project
-```
-
-### Remote ticket origins
-
-Instead of local bare repo, use hosted git:
-```bash
-ralphs init --ticket-remote git@github.com:org/project-tickets.git
 ```
