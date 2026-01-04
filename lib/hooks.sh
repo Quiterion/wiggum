@@ -30,7 +30,7 @@ run_hook() {
 
     # Set up environment
     export WIGGUM_TICKET_ID="$ticket_id"
-    export WIGGUM_TICKET_PATH="$TICKETS_DIR/${ticket_id}.md"
+    export WIGGUM_TICKET_PATH="$MAIN_TICKETS_DIR/${ticket_id}.md"
     export WIGGUM_SESSION
     export WIGGUM_HOOKS_DIR="$HOOKS_DIR"
 
