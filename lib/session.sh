@@ -12,6 +12,7 @@ session_exists() {
 # Initialize a new ralphs session
 cmd_init() {
     local session_name=""
+    local no_session=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -19,6 +20,10 @@ cmd_init() {
             --session)
                 session_name="$2"
                 shift 2
+                ;;
+            --no-session)
+                no_session=true
+                shift
                 ;;
             *)
                 error "Unknown option: $1"
@@ -65,6 +70,12 @@ cmd_init() {
 
     # Load config
     load_config
+
+    # Skip session creation if requested (for testing)
+    if [[ "$no_session" == "true" ]]; then
+        success "ralphs initialized (no session)"
+        return 0
+    fi
 
     # Override session name if provided
     [[ -n "$session_name" ]] && RALPHS_SESSION="$session_name"

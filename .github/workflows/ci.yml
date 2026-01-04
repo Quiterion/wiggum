@@ -22,29 +22,14 @@ jobs:
       - name: Run shellcheck on hooks
         run: shellcheck --severity=warning defaults/hooks/*
 
+      - name: Run shellcheck on tests
+        run: shellcheck --severity=warning tests/*.sh
+
   test:
-    name: Basic Tests
+    name: Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Test CLI help
-        run: ./bin/ralphs --help
-
-      - name: Test init
-        run: |
-          ./bin/ralphs init
-          test -d .ralphs
-          test -f .ralphs/config.sh
-
-      - name: Test ticket create
-        run: |
-          ./bin/ralphs init
-          TICKET_ID=$(./bin/ralphs ticket create "Test ticket" --type task)
-          test -f ".ralphs/tickets/${TICKET_ID}.md"
-
-      - name: Test ticket list
-        run: |
-          ./bin/ralphs init
-          ./bin/ralphs ticket create "Test ticket"
-          ./bin/ralphs ticket list | grep -q "Test ticket"
+      - name: Run test suite
+        run: ./tests/test_ralphs.sh
