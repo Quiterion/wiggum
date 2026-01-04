@@ -342,11 +342,12 @@ cmd_spawn() {
     # Start work on ticket if it's ready (assigning a ticket to any agent starts it)
     if [[ -n "$ticket_id" ]]; then
         local current_state
-        current_state=$(get_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "state")
+        current_state=$(get_ticket_value "$ticket_id" "state")
+
         if [[ "$current_state" == "ready" ]]; then
-            set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "state" "in-progress"
-            set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "assigned_agent_id" "$agent_id"
-            set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "assigned_at" "$(timestamp)"
+            # Use ticket functions instead of direct frontmatter manipulation
+            ticket_transition "$ticket_id" "in-progress"
+            ticket_assign "$ticket_id" "$agent_id"
             run_hook "on-claim" "$ticket_id"
         fi
     fi
@@ -493,8 +494,9 @@ cmd_kill() {
 
     # Release ticket if requested
     if [[ "$release_ticket" == "true" ]] && [[ -n "$ticket_id" ]]; then
-        set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "state" "ready"
-        set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "assigned_agent_id" ""
+        # Use ticket functions instead of direct frontmatter manipulation
+        ticket_unassign "$ticket_id"
+        set_ticket_value "$ticket_id" "state" "ready" "Release ticket: $ticket_id"
         info "Released ticket $ticket_id"
     fi
 

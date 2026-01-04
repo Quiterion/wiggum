@@ -127,7 +127,7 @@ A ticket is `ready` only when all `depends_on` tickets are `done`.
 Query blocked/ready tickets:
 
 ```bash
-wiggum ticket ready      # Show tickets available to claim
+wiggum ticket ready      # Show tickets available for work
 wiggum ticket blocked    # Show tickets waiting on dependencies
 wiggum ticket tree tk-5c46   # Show dependency tree
 ```
@@ -168,14 +168,13 @@ wiggum ticket create "Title" [--type TYPE] [--priority N] [--dep ID]
 
 # Query
 wiggum ticket list              # All tickets
-wiggum ticket ready             # Ready to claim
+wiggum ticket ready             # Ready for work
 wiggum ticket blocked           # Blocked by dependencies
 wiggum ticket show <id>         # Full ticket details
 wiggum ticket tree <id>         # Dependency tree
 
 # State transitions
-wiggum ticket claim <id>        # Mark in-progress (usually by worker)
-wiggum ticket transition <id> <state>   # Explicit state change
+wiggum ticket transition <id> <state>   # Change ticket state
 
 # Edit
 wiggum ticket edit <id>         # Open in $EDITOR
@@ -188,6 +187,55 @@ wiggum ticket sync --push       # Push only
 
 # Partial ID matching
 wiggum ticket show 5c4          # Matches tk-5c46
+
+# Assignment
+wiggum ticket assign <id> <agent-id>   # Assign agent to ticket
+wiggum ticket unassign <id>            # Remove assignment
+```
+
+---
+
+## Manual Assignment
+
+The `assign` and `unassign` commands allow manual control over ticket assignment without changing ticket state.
+
+### assign
+
+```bash
+wiggum ticket assign <ticket-id> <agent-id>
+```
+
+Sets the `assigned_agent_id` and `assigned_at` frontmatter fields. Use this for:
+
+- Reassigning work from one agent to another
+- Manual intervention when automatic assignment fails
+- Reserving tickets for specific agents
+
+### unassign
+
+```bash
+wiggum ticket unassign <ticket-id>
+```
+
+Clears the `assigned_agent_id` and `assigned_at` fields. Use this for:
+
+- Releasing a ticket back to the pool
+- Cleaning up stale assignments after agent termination
+- Manual recovery scenarios
+
+### Difference from `transition`
+
+| Command | State Change | Assignment |
+|---------|--------------|------------|
+| `transition` | Any valid transition | None |
+| `assign` | None | Sets `assigned_agent_id` |
+| `unassign` | None | Clears `assigned_agent_id` |
+
+`transition` changes ticket state. `assign`/`unassign` manipulate assignment without affecting state. To start work on a ticket, use both:
+
+```bash
+wiggum ticket transition tk-5c46 in-progress
+wiggum ticket assign tk-5c46 worker-0
 ```
 
 ---

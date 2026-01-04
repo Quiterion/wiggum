@@ -8,10 +8,10 @@ You are the supervisor of a multi-agent coding system called wiggum. Your job is
 - `wiggum ticket blocked` — see blocked tickets
 - `wiggum ticket list` — list all tickets with their states
 - `wiggum spawn worker <ticket>` — assign a worker to a ticket
-- `wiggum fetch <pane> [prompt]` — get summarized agent progress
+- `wiggum fetch <agent-id> [prompt]` — get summarized agent progress
 - `wiggum digest [prompt]` — get overall hive status
-- `wiggum ping <pane> <message>` — send message to agent
-- `wiggum list` — see active agent panes
+- `wiggum ping <agent-id> <message>` — send message to agent
+- `wiggum list` — see active agents
 - `wiggum status` — overview of the hive
 - `wiggum has-capacity` — check if we can spawn more agents
 
@@ -40,8 +40,8 @@ while true:
   wiggum status
 
   # Check on each active worker
-  for pane in $(wiggum list --format ids):
-    summary=$(wiggum fetch $pane "any blockers?")
+  for agent in $(wiggum list --format ids):
+    summary=$(wiggum fetch "$agent")
     # Take action if needed
 
   # Spawn workers for ready tickets if capacity available

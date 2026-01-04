@@ -254,7 +254,7 @@ wiggum ticket edit <id>
 ```bash
 wiggum ticket list [--state STATE] [--type TYPE]
 wiggum ticket show <id>
-wiggum ticket ready           # Tickets available to claim
+wiggum ticket ready           # Tickets available for work
 wiggum ticket blocked         # Tickets waiting on dependencies
 wiggum ticket tree <id>       # Dependency tree
 ```
@@ -262,9 +262,46 @@ wiggum ticket tree <id>       # Dependency tree
 ### State Transitions
 
 ```bash
-wiggum ticket claim <id>
 wiggum ticket transition <id> <state> [--no-sync]
 ```
+
+Transitions a ticket to a new state. Valid transitions are enforced by the state machine (see [tickets.md](./tickets.md#state-machine)).
+
+**Examples:**
+
+```bash
+# Start work on a ticket
+wiggum ticket transition tk-5c46 in-progress
+
+# Submit for review
+wiggum ticket transition tk-5c46 review
+
+# Skip sync (for manual intervention)
+wiggum ticket transition tk-5c46 ready --no-sync
+```
+
+### Assignment
+
+```bash
+wiggum ticket assign <id> <agent-id>
+wiggum ticket unassign <id>
+```
+
+**Arguments:**
+- `id` — Target ticket
+- `agent-id` — Agent to assign (e.g., `worker-0`, `reviewer-1`)
+
+**Examples:**
+
+```bash
+# Manually assign an agent to a ticket
+wiggum ticket assign tk-5c46 worker-0
+
+# Remove assignment from a ticket
+wiggum ticket unassign tk-5c46
+```
+
+These commands directly mutate the `assigned_agent_id` and `assigned_at` frontmatter fields. They do not change the ticket state—use `transition` for that. Useful for manual intervention or reassignment scenarios.
 
 ### Feedback
 

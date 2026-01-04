@@ -161,7 +161,7 @@ wiggum digest
 #    - worker-1 (tk-8a2b): Rate limiting, blocked on auth
 #    - reviewer-0 (tk-3a1b): Reviewing DB schema, minor issues found
 #
-#    2 tickets ready to claim. No critical blockers."
+#    2 tickets ready for work. No critical blockers."
 
 # Specific question
 wiggum digest "what's blocking progress?"

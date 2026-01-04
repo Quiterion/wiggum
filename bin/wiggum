@@ -58,27 +58,28 @@ Session Management:
   attach [--session NAME]       Attach to existing session
   teardown [--force]            Tear down session and cleanup
 
-Pane Management:
+Agent Management:
   spawn <role> [ticket-id]      Spawn an agent in a new pane
-  list [--format FORMAT]        List active panes
-  kill <pane-id> [--release]    Kill a worker pane
-  ping <pane-id> <message>      Send message to a worker
+  list [--format FORMAT]        List active agents
+  kill <agent-id> [--release]   Kill an agent
+  ping <agent-id> <message>     Send message to an agent
 
 Observability:
   status [--verbose]            Overview of the hive
-  fetch <pane-id> [prompt]      Get summarized worker progress
+  fetch <agent-id> [prompt]     Get summarized agent progress
   digest [prompt]               Summarize the whole hive
-  logs <pane-id> [--tail N]     Raw pane output
+  logs <pane-id> [--tail N]     Raw agent trajectory
 
 Ticket Management:
   ticket create <title> [opts]  Create a new ticket
   ticket list [--state STATE]   List tickets
   ticket show <id>              Show ticket details
-  ticket ready                  Tickets available to claim
+  ticket ready                  Tickets available for work
   ticket blocked                Tickets waiting on deps
   ticket tree <id>              Dependency tree
-  ticket claim <id>             Claim a ticket
   ticket transition <id> <st>   Transition ticket state
+  ticket assign <id> <agent>    Assign agent to ticket
+  ticket unassign <id>          Remove agent assignment
   ticket edit <id>              Edit ticket in \$EDITOR
   ticket feedback <id> <src> <msg>  Add feedback
   ticket sync [--pull|--push]   Sync tickets with origin
@@ -102,35 +103,35 @@ EOF
 parse_global_flags() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --session)
-                export WIGGUM_SESSION="$2"
-                shift 2
-                ;;
-            --config)
-                export WIGGUM_CONFIG_PATH="$2"
-                shift 2
-                ;;
-            --quiet)
-                WIGGUM_QUIET=true
-                shift
-                ;;
-            --verbose)
-                WIGGUM_VERBOSE=true
-                shift
-                ;;
-            --help|-h)
-                usage
-                exit 0
-                ;;
-            --version|-v)
-                echo "wiggum v$WIGGUM_VERSION"
-                exit 0
-                ;;
-            *)
-                # Return remaining args
-                REMAINING_ARGS=("$@")
-                return 0
-                ;;
+        --session)
+            export WIGGUM_SESSION="$2"
+            shift 2
+            ;;
+        --config)
+            export WIGGUM_CONFIG_PATH="$2"
+            shift 2
+            ;;
+        --quiet)
+            WIGGUM_QUIET=true
+            shift
+            ;;
+        --verbose)
+            WIGGUM_VERBOSE=true
+            shift
+            ;;
+        --help | -h)
+            usage
+            exit 0
+            ;;
+        --version | -v)
+            echo "wiggum v$WIGGUM_VERSION"
+            exit 0
+            ;;
+        *)
+            # Return remaining args
+            REMAINING_ARGS=("$@")
+            return 0
+            ;;
         esac
     done
     REMAINING_ARGS=()
@@ -155,77 +156,77 @@ main() {
     shift
 
     case "$cmd" in
-        # Session management
-        init)
-            cmd_init "$@"
-            ;;
-        attach)
-            cmd_attach "$@"
-            ;;
-        teardown)
-            cmd_teardown "$@"
-            ;;
+    # Session management
+    init)
+        cmd_init "$@"
+        ;;
+    attach)
+        cmd_attach "$@"
+        ;;
+    teardown)
+        cmd_teardown "$@"
+        ;;
 
-        # Pane management
-        spawn)
-            cmd_spawn "$@"
-            ;;
-        list)
-            cmd_list "$@"
-            ;;
-        kill)
-            cmd_kill "$@"
-            ;;
-        ping)
-            cmd_ping "$@"
-            ;;
+    # Pane management
+    spawn)
+        cmd_spawn "$@"
+        ;;
+    list)
+        cmd_list "$@"
+        ;;
+    kill)
+        cmd_kill "$@"
+        ;;
+    ping)
+        cmd_ping "$@"
+        ;;
 
-        # Observability
-        status)
-            cmd_status "$@"
-            ;;
-        fetch)
-            cmd_fetch "$@"
-            ;;
-        digest)
-            cmd_digest "$@"
-            ;;
-        logs)
-            cmd_logs "$@"
-            ;;
-        context)
-            cmd_context "$@"
-            ;;
+    # Observability
+    status)
+        cmd_status "$@"
+        ;;
+    fetch)
+        cmd_fetch "$@"
+        ;;
+    digest)
+        cmd_digest "$@"
+        ;;
+    logs)
+        cmd_logs "$@"
+        ;;
+    context)
+        cmd_context "$@"
+        ;;
 
-        # Ticket subcommands
-        ticket)
-            cmd_ticket "$@"
-            ;;
+    # Ticket subcommands
+    ticket)
+        cmd_ticket "$@"
+        ;;
 
-        # Hook subcommands
-        hook)
-            cmd_hook "$@"
-            ;;
+    # Hook subcommands
+    hook)
+        cmd_hook "$@"
+        ;;
 
-        # Utilities
-        has-capacity)
-            cmd_has_capacity "$@"
-            ;;
+    # Utilities
+    has-capacity)
+        cmd_has_capacity "$@"
+        ;;
 
-        # Internal
-        --ephemeral)
-            cmd_ephemeral "$@"
-            ;;
+    # Internal
+    --ephemeral)
+        cmd_ephemeral "$@"
+        ;;
 
-        help|--help|-h)
-            usage
-            ;;
+    help | --help | -h)
+        usage
+        ;;
 
-        *)
-            error "Unknown command: $cmd"
-            usage
-            exit $EXIT_INVALID_ARGS
-            ;;
+    *)
+        error "Unknown command: $cmd"
+        usage
+        exit $EXIT_INVALID_ARGS
+        ;;
     esac
 }
 

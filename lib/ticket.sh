@@ -6,7 +6,7 @@
 #
 
 # Valid states and transitions
-VALID_STATES=("ready" "in-progress" "review" "qa" "done")
+VALID_STATES=("ready" "in-progress" "review" "qa" "done", "closed")
 
 #
 # Ticket I/O abstraction layer
@@ -33,7 +33,7 @@ list_ticket_ids() {
 read_ticket() {
     local id="$1"
     if has_ticket_clone; then
-        cat "$TICKETS_DIR/${id}.md" 2>/dev/null
+        cat "$TICKETS_DIR/${id}.md"
     else
         bare_read_ticket "${id}.md"
     fi
@@ -46,8 +46,8 @@ write_ticket() {
     local commit_msg="${3:-Update ticket: $id}"
 
     if has_ticket_clone; then
-        echo "$content" > "$TICKETS_DIR/${id}.md"
-        ticket_sync_push "$commit_msg" 2>/dev/null || true
+        echo "$content" >"$TICKETS_DIR/${id}.md"
+        ticket_sync_push "$commit_msg" || true
     else
         bare_write_ticket "${id}.md" "$content" "$commit_msg"
     fi
@@ -103,17 +103,17 @@ get_ticket_deps() {
 
 # State transition rules: from -> allowed targets
 declare -A TRANSITIONS=(
-    ["ready"]="in-progress"
+    ["ready"]="in-progress closed"
     ["in-progress"]="review"
-    ["review"]="qa in-progress"
-    ["qa"]="done in-progress"
+    ["review"]="qa in-progress done closed"
+    ["qa"]="done in-progress closed"
 )
 
 # Ticket subcommand router
 cmd_ticket() {
     if [[ $# -eq 0 ]]; then
         error "Usage: wiggum ticket <subcommand>"
-        echo "Subcommands: create, list, show, ready, blocked, tree, claim, transition, edit, feedback"
+        echo "Subcommands: create, list, show, ready, blocked, tree, transition, assign, unassign, edit, feedback"
         exit "$EXIT_INVALID_ARGS"
     fi
 
@@ -139,9 +139,6 @@ cmd_ticket() {
         tree)
             ticket_tree "$@"
             ;;
-        claim)
-            ticket_claim "$@"
-            ;;
         transition)
             ticket_transition "$@"
             ;;
@@ -151,6 +148,12 @@ cmd_ticket() {
         feedback)
             ticket_feedback "$@"
             ;;
+        assign)
+            ticket_assign "$@"
+            ;;
+        unassign)
+            ticket_unassign "$@"
+                ;;
         sync)
             cmd_ticket_sync "$@"
             ;;
@@ -177,21 +180,21 @@ ticket_create() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --type)
-                type="$2"
-                shift 2
-                ;;
-            --priority)
-                priority="$2"
-                shift 2
-                ;;
-            --dep)
-                deps+=("$2")
-                shift 2
-                ;;
-            *)
-                shift
-                ;;
+        --type)
+            type="$2"
+            shift 2
+            ;;
+        --priority)
+            priority="$2"
+            shift 2
+            ;;
+        --dep)
+            deps+=("$2")
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
         esac
     done
 
@@ -199,7 +202,7 @@ ticket_create() {
 
     # Sync before write operation (only for clones)
     # shellcheck disable=SC2015
-    has_ticket_clone && ticket_sync_pull 2>/dev/null || true
+    has_ticket_clone && ticket_sync_pull || true
 
     # Generate ticket ID
     local id
@@ -251,6 +254,8 @@ created_by: manual
 
     # Write ticket using abstraction
     write_ticket "$id" "$content" "Create ticket: $id"
+    echo "$content" >"$TICKETS_DIR/${id}.md"
+    ticket_sync_push "$commit_msg" || true
 
     # Show success message only when interactive (TTY)
     if [[ -t 1 ]]; then
@@ -266,40 +271,40 @@ ticket_list() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --state)
-                filter_state="$2"
-                shift 2
-                ;;
-            --type)
-                filter_type="$2"
-                shift 2
-                ;;
-            *)
-                shift
-                ;;
+        --state)
+            filter_state="$2"
+            shift 2
+            ;;
+        --type)
+            filter_type="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
         esac
     done
 
     require_project
 
     # Sync before read operation
-    ticket_sync_pull 2>/dev/null || true
+    ticket_sync_pull || true
 
     echo ""
     printf "${BOLD}%-10s %-10s %-10s %-3s %-40s${NC}\n" "ID" "STATE" "TYPE" "PRI" "TITLE"
     echo "-------------------------------------------------------------------------------"
 
-    for ticket_file in "$TICKETS_DIR"/*.md; do
+    for ticket_file in "$MAIN_TICKETS_DIR"/*.md; do
         [[ -f "$ticket_file" ]] || continue
 
         local id
-    id=$(get_frontmatter_value "$ticket_file" "id")
+        id=$(get_frontmatter_value "$ticket_file" "id")
         local state
-    state=$(get_frontmatter_value "$ticket_file" "state")
+        state=$(get_frontmatter_value "$ticket_file" "state")
         local type
-    type=$(get_frontmatter_value "$ticket_file" "type")
+        type=$(get_frontmatter_value "$ticket_file" "type")
         local priority
-    priority=$(get_frontmatter_value "$ticket_file" "priority")
+        priority=$(get_frontmatter_value "$ticket_file" "priority")
 
         # Apply filters
         if [[ -n "$filter_state" ]] && [[ "$state" != "$filter_state" ]]; then continue; fi
@@ -307,7 +312,7 @@ ticket_list() {
 
         # Get title (first H1)
         local title
-    title=$(grep -m1 '^# ' "$ticket_file" | sed 's/^# //')
+        title=$(grep -m1 '^# ' "$ticket_file" | sed 's/^# //')
 
         # Truncate title if needed
         if [[ ${#title} -gt 38 ]]; then title="${title:0:35}..."; fi
@@ -330,7 +335,7 @@ ticket_show() {
     require_project
 
     # Sync before read operation
-    ticket_sync_pull 2>/dev/null || true
+    ticket_sync_pull || true
 
     local ticket_path="$TICKETS_DIR/${id}.md"
     if [[ ! -f "$ticket_path" ]]; then
@@ -347,40 +352,40 @@ ticket_ready() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --limit)
-                limit="$2"
-                shift 2
-                ;;
-            *)
-                shift
-                ;;
+        --limit)
+            limit="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
         esac
     done
 
     require_project
 
     # Sync before read operation
-    ticket_sync_pull 2>/dev/null || true
+    ticket_sync_pull || true
 
     local count=0
     for ticket_file in "$TICKETS_DIR"/*.md; do
         [[ -f "$ticket_file" ]] || continue
 
         local state
-    state=$(get_frontmatter_value "$ticket_file" "state")
+        state=$(get_frontmatter_value "$ticket_file" "state")
         if [[ "$state" != "ready" ]]; then continue; fi
 
         # Check dependencies
         local blocked=false
         local deps
-    deps=$(awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}' "$ticket_file")
+        deps=$(awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}' "$ticket_file")
 
         for dep in $deps; do
             if [[ -z "$dep" ]]; then continue; fi
             local dep_file="$TICKETS_DIR/${dep}.md"
             if [[ -f "$dep_file" ]]; then
                 local dep_state
-    dep_state=$(get_frontmatter_value "$dep_file" "state")
+                dep_state=$(get_frontmatter_value "$dep_file" "state")
                 if [[ "$dep_state" != "done" ]]; then
                     blocked=true
                     break
@@ -391,7 +396,7 @@ ticket_ready() {
         if [[ "$blocked" == "true" ]]; then continue; fi
 
         local id
-    id=$(get_frontmatter_value "$ticket_file" "id")
+        id=$(get_frontmatter_value "$ticket_file" "id")
         echo "$id"
 
         count=$((count + 1))
@@ -404,18 +409,18 @@ ticket_blocked() {
     require_project
 
     # Sync before read operation
-    ticket_sync_pull 2>/dev/null || true
+    ticket_sync_pull || true
 
     for ticket_file in "$TICKETS_DIR"/*.md; do
         [[ -f "$ticket_file" ]] || continue
 
         local state
-    state=$(get_frontmatter_value "$ticket_file" "state")
+        state=$(get_frontmatter_value "$ticket_file" "state")
         if [[ "$state" != "ready" ]]; then continue; fi
 
         # Check dependencies
         local deps
-    deps=$(awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}' "$ticket_file")
+        deps=$(awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}' "$ticket_file")
         local blocking_deps=""
 
         for dep in $deps; do
@@ -423,7 +428,7 @@ ticket_blocked() {
             local dep_file="$TICKETS_DIR/${dep}.md"
             if [[ -f "$dep_file" ]]; then
                 local dep_state
-    dep_state=$(get_frontmatter_value "$dep_file" "state")
+                dep_state=$(get_frontmatter_value "$dep_file" "state")
                 if [[ "$dep_state" != "done" ]]; then
                     blocking_deps="$blocking_deps $dep"
                 fi
@@ -432,7 +437,7 @@ ticket_blocked() {
 
         if [[ -n "$blocking_deps" ]]; then
             local id
-    id=$(get_frontmatter_value "$ticket_file" "id")
+            id=$(get_frontmatter_value "$ticket_file" "id")
             echo "$id blocked by:$blocking_deps"
         fi
     done
@@ -450,7 +455,7 @@ ticket_tree() {
     require_project
 
     # Sync before read operation
-    ticket_sync_pull 2>/dev/null || true
+    ticket_sync_pull || true
 
     _print_tree "$id" 0
 }
@@ -460,7 +465,7 @@ _print_tree() {
     local depth="$2"
     local indent=""
 
-    for ((i=0; i<depth; i++)); do
+    for ((i = 0; i < depth; i++)); do
         indent="$indent  "
     done
 
@@ -490,40 +495,6 @@ _print_tree() {
     done
 }
 
-# Claim a ticket
-ticket_claim() {
-    if [[ $# -lt 1 ]]; then
-        error "Usage: wiggum ticket claim <id>"
-        exit "$EXIT_INVALID_ARGS"
-    fi
-
-    local id
-    id=$(resolve_ticket_id "$1") || exit "$EXIT_TICKET_NOT_FOUND"
-    require_project
-
-    # Sync before write operation
-    ticket_sync_pull 2>/dev/null || true
-
-    local ticket_path="$TICKETS_DIR/${id}.md"
-    local current_state
-    current_state=$(get_frontmatter_value "$ticket_path" "state")
-
-    if [[ "$current_state" != "ready" ]]; then
-        error "Cannot claim ticket in state: $current_state"
-        exit "$EXIT_INVALID_TRANSITION"
-    fi
-
-    set_frontmatter_value "$ticket_path" "state" "in-progress"
-    set_frontmatter_value "$ticket_path" "assigned_at" "$(timestamp)"
-
-    # Sync after write operation
-    ticket_sync_push "Start ticket: $id" 2>/dev/null || true
-
-    run_hook "on-claim" "$id"
-
-    success "Started $id"
-}
-
 # Transition ticket state
 ticket_transition() {
     if [[ $# -lt 2 ]]; then
@@ -539,13 +510,13 @@ ticket_transition() {
     local no_sync=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --no-sync)
-                no_sync=true
-                shift
-                ;;
-            *)
-                shift
-                ;;
+        --no-sync)
+            no_sync=true
+            shift
+            ;;
+        *)
+            shift
+            ;;
         esac
     done
 
@@ -553,7 +524,7 @@ ticket_transition() {
 
     # Sync before write operation
     # shellcheck disable=SC2015
-    [[ "$no_sync" != "true" ]] && ticket_sync_pull 2>/dev/null || true
+    [[ "$no_sync" != "true" ]] && ticket_sync_pull || true
 
     local ticket_path="$TICKETS_DIR/${id}.md"
     local current_state
@@ -562,7 +533,10 @@ ticket_transition() {
     # Validate state
     local valid=false
     for s in "${VALID_STATES[@]}"; do
-        if [[ "$new_state" == "$s" ]]; then valid=true; break; fi
+        if [[ "$new_state" == "$s" ]]; then
+            valid=true
+            break
+        fi
     done
 
     if [[ "$valid" != "true" ]]; then
@@ -584,7 +558,7 @@ ticket_transition() {
 
     # Sync after write operation (hooks triggered by post-receive in bare repo)
     # shellcheck disable=SC2015
-    [[ "$no_sync" != "true" ]] && ticket_sync_push "Transition $id: $current_state → $new_state" 2>/dev/null || true
+    [[ "$no_sync" != "true" ]] && ticket_sync_push "Transition $id: $current_state → $new_state" || true
 
     success "Transitioned $id: $current_state -> $new_state"
 }
@@ -621,7 +595,7 @@ ticket_feedback() {
     require_project
 
     # Sync before write operation
-    ticket_sync_pull 2>/dev/null || true
+    ticket_sync_pull || true
 
     local ticket_path="$TICKETS_DIR/${id}.md"
 
@@ -647,7 +621,7 @@ $message
     mv "$temp" "$ticket_path"
 
     # Sync after write operation
-    ticket_sync_push "Feedback on $id from $source" 2>/dev/null || true
+    ticket_sync_push "Feedback on $id from $source" || true
 
     # Ping assigned agent if any
     local agent_id
@@ -664,4 +638,74 @@ $message
     fi
 
     success "Added feedback to $id"
+}
+
+# Assign an agent to a ticket
+ticket_assign() {
+    if [[ $# -lt 2 ]]; then
+        error "Usage: wiggum ticket assign <ticket-id> <agent-id>"
+        exit "$EXIT_INVALID_ARGS"
+    fi
+
+    local id
+    id=$(resolve_ticket_id "$1") || exit "$EXIT_TICKET_NOT_FOUND"
+    local agent_id="$2"
+
+    require_project
+
+    # Sync before write operation
+    ticket_sync_pull || true
+
+    local ticket_path="$TICKETS_DIR/${id}.md"
+    if [[ ! -f "$ticket_path" ]]; then
+        error "Ticket not found: $id"
+        exit "$EXIT_TICKET_NOT_FOUND"
+    fi
+
+    # Set assignment fields
+    set_frontmatter_value "$ticket_path" "assigned_agent_id" "$agent_id"
+    set_frontmatter_value "$ticket_path" "assigned_at" "$(timestamp)"
+
+    # Sync after write operation
+    ticket_sync_push "Assign $agent_id to $id" || true
+
+    success "Assigned $agent_id to $id"
+}
+
+# Unassign the current agent from a ticket
+ticket_unassign() {
+    if [[ $# -lt 1 ]]; then
+        error "Usage: wiggum ticket unassign <ticket-id>"
+        exit "$EXIT_INVALID_ARGS"
+    fi
+
+    local id
+    id=$(resolve_ticket_id "$1") || exit "$EXIT_TICKET_NOT_FOUND"
+
+    require_project
+
+    # Sync before write operation
+    ticket_sync_pull || true
+
+    local ticket_path="$TICKETS_DIR/${id}.md"
+    if [[ ! -f "$ticket_path" ]]; then
+        error "Ticket not found: $id"
+        exit "$EXIT_TICKET_NOT_FOUND"
+    fi
+
+    local prev_agent
+    prev_agent=$(get_frontmatter_value "$ticket_path" "assigned_agent_id")
+
+    # Clear assignment fields
+    set_frontmatter_value "$ticket_path" "assigned_agent_id" ""
+    set_frontmatter_value "$ticket_path" "assigned_at" ""
+
+    # Sync after write operation
+    ticket_sync_push "Unassign $id" || true
+
+    if [[ -n "$prev_agent" ]]; then
+        success "Unassigned $prev_agent from $id"
+    else
+        success "Cleared assignment on $id"
+    fi
 }
