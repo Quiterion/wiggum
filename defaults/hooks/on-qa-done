@@ -1,0 +1,33 @@
+#!/bin/bash
+#
+# on-qa-done - Triggered when QA passes
+#
+# Ticket is complete. Optionally check for release tagging.
+#
+# Environment:
+#   RALPHS_TICKET_ID    - The ticket ID
+#   RALPHS_TICKET_PATH  - Full path to ticket file
+#   RALPHS_PREV_STATE   - Previous state (qa)
+#   RALPHS_NEW_STATE    - New state (done)
+#   RALPHS_PANE         - Pane that triggered transition
+#   RALPHS_SESSION      - tmux session name
+#
+
+TICKET_ID="${1:-$RALPHS_TICKET_ID}"
+
+echo "[hook] QA passed for $TICKET_ID"
+
+# Check if all in-progress tickets are now done
+# If so, could auto-tag a release
+ACTIVE=$(ralphs ticket list --state implement 2>/dev/null | wc -l)
+ACTIVE=$((ACTIVE + $(ralphs ticket list --state review 2>/dev/null | wc -l)))
+ACTIVE=$((ACTIVE + $(ralphs ticket list --state qa 2>/dev/null | wc -l)))
+
+if [[ "$ACTIVE" -le 1 ]]; then  # 1 because header line
+    echo "[hook] All tickets complete!"
+    # Uncomment to auto-tag:
+    # LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+    # NEXT_TAG=$(echo "$LAST_TAG" | awk -F. '{print $1"."$2"."$3+1}')
+    # git tag "$NEXT_TAG"
+    # echo "[hook] Tagged release: $NEXT_TAG"
+fi

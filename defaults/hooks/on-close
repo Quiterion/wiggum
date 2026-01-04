@@ -1,0 +1,29 @@
+#!/bin/bash
+#
+# on-close - Triggered when a ticket is closed (done)
+#
+# Logs metrics and performs cleanup.
+#
+# Environment:
+#   RALPHS_TICKET_ID    - The ticket ID
+#   RALPHS_TICKET_PATH  - Full path to ticket file
+#   RALPHS_SESSION      - tmux session name
+#
+
+TICKET_ID="${1:-$RALPHS_TICKET_ID}"
+TICKET_PATH="${RALPHS_TICKET_PATH:-.ralphs/tickets/${TICKET_ID}.md}"
+
+echo "[hook] Ticket $TICKET_ID closed"
+
+# Calculate cycle time
+if [[ -f "$TICKET_PATH" ]]; then
+    CREATED=$(grep 'created_at:' "$TICKET_PATH" | awk '{print $2}')
+    CLOSED=$(date -Iseconds)
+
+    if [[ -n "$CREATED" ]]; then
+        echo "[metrics] $TICKET_ID - Created: $CREATED, Closed: $CLOSED"
+
+        # Optional: append to metrics log
+        # echo "$TICKET_ID,$CREATED,$CLOSED" >> .ralphs/metrics.csv
+    fi
+fi

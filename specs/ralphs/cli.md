@@ -2,6 +2,8 @@
 
 The `ralphs` command is the primary interface to the harness.
 
+**Working Directory:** All commands can be run from any subdirectory within the project. ralphs automatically finds the project root by walking up the directory tree to find `.ralphs/` or the git repository root.
+
 ---
 
 ## Command Groups
@@ -31,9 +33,11 @@ ralphs init [--session NAME] [--config PATH]
 - `--config PATH` — Path to config file (default: `.ralphs/config.sh`)
 
 **Effects:**
-- Creates `.ralphs/` directory structure if needed
+- Creates `.ralphs/` directory structure at the git repository root
 - Starts tmux session
 - Sources configuration
+
+**Note:** Can be run from any subdirectory within the git repository. If already in a ralphs project, uses the existing project.
 
 ---
 
@@ -251,6 +255,16 @@ ralphs ticket transition <id> <state> [--no-hooks]
 
 ```bash
 ralphs ticket feedback <id> <source> <message>
+```
+
+### Sync
+
+Ticket operations auto-sync with the bare repo. Manual sync:
+
+```bash
+ralphs ticket sync              # Pull + push
+ralphs ticket sync --pull       # Pull only
+ralphs ticket sync --push       # Push only
 ```
 
 ---

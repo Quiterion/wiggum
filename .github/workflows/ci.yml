@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run shellcheck on bin/
+        run: shellcheck --severity=warning bin/*
+
+      - name: Run shellcheck on lib/
+        run: shellcheck --severity=warning lib/*.sh
+
+      - name: Run shellcheck on hooks
+        run: shellcheck --severity=warning defaults/hooks/*
+
+      - name: Run shellcheck on tests
+        run: shellcheck --severity=warning tests/*.sh
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run test suite
+        run: ./tests/test_ralphs.sh

@@ -1,0 +1,26 @@
+#!/bin/bash
+#
+# on-review-rejected - Triggered when review rejects changes
+#
+# Pings the implementer to address feedback.
+#
+# Environment:
+#   RALPHS_TICKET_ID    - The ticket ID
+#   RALPHS_TICKET_PATH  - Full path to ticket file
+#   RALPHS_PREV_STATE   - Previous state (review)
+#   RALPHS_NEW_STATE    - New state (implement)
+#   RALPHS_PANE         - Pane that triggered transition (reviewer)
+#   RALPHS_SESSION      - tmux session name
+#
+
+TICKET_ID="${1:-$RALPHS_TICKET_ID}"
+
+echo "[hook] Review rejected for $TICKET_ID"
+
+# Get the assigned implementer pane
+IMPL_PANE=$(grep 'assigned_pane:' "$RALPHS_TICKET_PATH" | awk '{print $2}')
+
+# Ping the implementer if still running
+if [[ -n "$IMPL_PANE" ]]; then
+    ralphs ping "$IMPL_PANE" "Review feedback added to your ticket. Please address and re-submit." 2>/dev/null || true
+fi
