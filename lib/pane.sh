@@ -21,10 +21,12 @@ send_pane_input() {
         sleep 0.2
         # Send message as literal text, then Enter to submit
         tmux send-keys -t "$target" -l "$message"
+        sleep 0.1
         tmux send-keys -t "$target" Enter
     else
         # Normal mode: just send message and Enter
         tmux send-keys -t "$target" -l "$message"
+        sleep 0.1
         tmux send-keys -t "$target" Enter
     fi
 }
