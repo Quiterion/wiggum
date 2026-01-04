@@ -206,10 +206,10 @@ Users can override by placing their own scripts in `.wiggum/hooks/`. The harness
 
 ## Disabling Hooks
 
-To skip hooks for a transition:
+Hooks are triggered by the `post-receive` git hook in the bare repo after sync. To skip hooks, use `--no-sync`:
 
 ```bash
-wiggum ticket transition <id> <state> --no-hooks
+wiggum ticket transition <id> <state> --no-sync
 ```
 
-Useful for manual intervention or recovery scenarios.
+Note: This prevents the state change from syncing to other agents. Useful for manual intervention or recovery scenarios.

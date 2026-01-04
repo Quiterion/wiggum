@@ -263,7 +263,7 @@ wiggum ticket tree <id>       # Dependency tree
 
 ```bash
 wiggum ticket claim <id>
-wiggum ticket transition <id> <state> [--no-hooks]
+wiggum ticket transition <id> <state> [--no-sync]
 ```
 
 ### Feedback
