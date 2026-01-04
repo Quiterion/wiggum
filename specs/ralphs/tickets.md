@@ -1,6 +1,8 @@
 # Tickets
 
-ralphs includes an integrated ticket system based on [wedow/ticket](https://github.com/wedow/ticket). Tickets are git-backed markdown files with YAML frontmatter, stored in `.ralphs/tickets/`.
+ralphs includes an integrated ticket system based on [wedow/ticket](https://github.com/wedow/ticket). Tickets are git-backed markdown files with YAML frontmatter.
+
+Tickets are stored in a bare git repository (`.ralphs/tickets.git`) and cloned to each worktree for multi-agent synchronization. See [distributed-tickets.md](./distributed-tickets.md) for details.
 
 ---
 
@@ -184,6 +186,11 @@ ralphs ticket transition <id> <state>   # Explicit state change
 # Edit
 ralphs ticket edit <id>         # Open in $EDITOR
 ralphs ticket feedback <id> <source> <message>   # Append feedback
+
+# Sync (for distributed mode)
+ralphs ticket sync              # Pull + push
+ralphs ticket sync --pull       # Pull only
+ralphs ticket sync --push       # Push only
 
 # Partial ID matching
 ralphs ticket show 5c4          # Matches tk-5c46

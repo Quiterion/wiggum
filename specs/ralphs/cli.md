@@ -253,6 +253,16 @@ ralphs ticket transition <id> <state> [--no-hooks]
 ralphs ticket feedback <id> <source> <message>
 ```
 
+### Sync
+
+Ticket operations auto-sync with the bare repo. Manual sync:
+
+```bash
+ralphs ticket sync              # Pull + push
+ralphs ticket sync --pull       # Pull only
+ralphs ticket sync --push       # Push only
+```
+
 ---
 
 ## Global Flags
