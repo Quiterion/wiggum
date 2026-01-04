@@ -42,30 +42,31 @@ cmd_status() {
     # Show agents
     echo -e "${BOLD}AGENTS:${NC}"
     local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
-    if [[ -f "$registry" ]] && [[ -s "$registry" ]] && [[ "$(cat "$registry")" != "[]" ]]; then
-        while IFS= read -r line; do
-            local pane
-    pane=$(echo "$line" | grep -o '"pane": "[^"]*"' | cut -d'"' -f4)
-            local role
-    role=$(echo "$line" | grep -o '"role": "[^"]*"' | cut -d'"' -f4)
-            local ticket
-    ticket=$(echo "$line" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
-            local started
-    started=$(echo "$line" | grep -o '"started_at": "[^"]*"' | cut -d'"' -f4)
+    if [[ -f "$registry" ]] && [[ -s "$registry" ]] && command -v jq &>/dev/null; then
+        local count
+        count=$(jq 'length' "$registry")
+        if [[ "$count" -gt 0 ]]; then
+            for ((i=0; i<count; i++)); do
+                local pane role ticket started uptime state
+                pane=$(jq -r ".[$i].pane" "$registry")
+                role=$(jq -r ".[$i].role" "$registry")
+                ticket=$(jq -r ".[$i].ticket // empty" "$registry")
+                started=$(jq -r ".[$i].started_at" "$registry")
+                uptime=$(duration_since "$started")
 
-            [[ -z "$pane" ]] && continue
+                # Get ticket state if available
+                state=""
+                if [[ -n "$ticket" ]] && [[ -f "$TICKETS_DIR/${ticket}.md" ]]; then
+                    state=$(get_frontmatter_value "$TICKETS_DIR/${ticket}.md" "state")
+                fi
 
-            local uptime
-    uptime=$(duration_since "$started")
-
-            # Get ticket state if available
-            local state=""
-            if [[ -n "$ticket" ]] && [[ -f "$TICKETS_DIR/${ticket}.md" ]]; then
-                state=$(get_frontmatter_value "$TICKETS_DIR/${ticket}.md" "state")
-            fi
-
-            printf "  %-12s %-12s %-12s %-10s\n" "$pane" "${ticket:-—}" "${state:-—}" "$uptime"
-        done < <(tr ',' '\n' < "$registry")
+                printf "  %-12s %-12s %-12s %-10s\n" "$pane" "${ticket:-—}" "${state:-—}" "$uptime"
+            done
+        else
+            echo "  (no agents)"
+        fi
+    elif [[ -f "$registry" ]]; then
+        echo "  (install jq for agent status)"
     else
         echo "  (no agents)"
     fi
@@ -73,7 +74,7 @@ cmd_status() {
 
     # Show ticket summary
     echo -e "${BOLD}TICKETS:${NC}"
-    for state in ready claimed implement review qa "done"; do
+    for state in ready in-progress review qa "done"; do
         local count=0
         for ticket_file in "$TICKETS_DIR"/*.md; do
             [[ -f "$ticket_file" ]] || continue
@@ -225,29 +226,28 @@ cmd_digest() {
 
     # Add agent summaries
     local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
-    if [[ -f "$registry" ]] && [[ -s "$registry" ]]; then
-        context="$context## Active Agents
+    if [[ -f "$registry" ]] && [[ -s "$registry" ]] && command -v jq &>/dev/null; then
+        local count
+        count=$(jq 'length' "$registry")
+        if [[ "$count" -gt 0 ]]; then
+            context="$context## Active Agents
 
 "
-        while IFS= read -r line; do
-            local pane
-    pane=$(echo "$line" | grep -o '"pane": "[^"]*"' | cut -d'"' -f4)
-            local role
-    role=$(echo "$line" | grep -o '"role": "[^"]*"' | cut -d'"' -f4)
-            local ticket
-    ticket=$(echo "$line" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
+            for ((i=0; i<count; i++)); do
+                local pane role ticket title
+                pane=$(jq -r ".[$i].pane" "$registry")
+                role=$(jq -r ".[$i].role" "$registry")
+                ticket=$(jq -r ".[$i].ticket // empty" "$registry")
 
-            [[ -z "$pane" ]] && continue
-
-            context="$context- $pane ($role)"
-            if [[ -n "$ticket" ]]; then
-                local title
-    title=$(grep -m1 '^# ' "$TICKETS_DIR/${ticket}.md" 2>/dev/null | sed 's/^# //')
-                context="$context: $ticket - $title"
-            fi
-            context="$context
+                context="$context- $pane ($role)"
+                if [[ -n "$ticket" ]]; then
+                    title=$(grep -m1 '^# ' "$TICKETS_DIR/${ticket}.md" 2>/dev/null | sed 's/^# //')
+                    context="$context: $ticket - $title"
+                fi
+                context="$context
 "
-        done < <(tr ',' '\n' < "$registry")
+            done
+        fi
     fi
 
     # Add ticket summary
