@@ -131,10 +131,10 @@ set -e
 
 # State transition rules
 declare -A TRANSITIONS=(
-    ["ready"]="in-progress"
+    ["ready"]="in-progress closed"
     ["in-progress"]="review"
-    ["review"]="qa in-progress"
-    ["qa"]="done in-progress"
+    ["review"]="qa in-progress done closed"
+    ["qa"]="done in-progress closed"
 )
 
 validate_transition() {
