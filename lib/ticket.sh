@@ -254,8 +254,6 @@ created_by: manual
 
     # Write ticket using abstraction
     write_ticket "$id" "$content" "Create ticket: $id"
-    echo "$content" >"$TICKETS_DIR/${id}.md"
-    ticket_sync_push "$commit_msg" || true
 
     # Show success message only when interactive (TTY)
     if [[ -t 1 ]]; then
