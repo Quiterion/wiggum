@@ -199,8 +199,8 @@ HOOK
 
 # Find project root (hooks -> tickets.git -> .wiggum -> proj)
 TICKETS_GIT="$(cd "$(dirname "$0")/.." && pwd)"
-WIGGUM_DIR="$(dirname "$TICKETS_GIT")"
-PROJECT_ROOT="$(dirname "$WIGGUM_DIR")"
+MAIN_WIGGUM_DIR="$(dirname "$TICKETS_GIT")"
+PROJECT_ROOT="$(dirname "$MAIN_WIGGUM_DIR")"
 
 # Find wiggum binary
 WIGGUM_BIN=$(command -v wiggum 2>/dev/null || echo "$PROJECT_ROOT/bin/wiggum")
@@ -246,6 +246,12 @@ while read -r oldrev newrev refname; do
         esac
     done
 done
+
+# Update main clone for observability commands
+MAIN_TICKETS="$MAIN_WIGGUM_DIR/tickets"
+if [[ -d "$MAIN_TICKETS/.git" ]]; then
+    git -C "$MAIN_TICKETS" pull --rebase --quiet 2>/dev/null || true
+fi
 HOOK
     chmod +x "$hooks_dir/post-receive"
 }
