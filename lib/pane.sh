@@ -29,94 +29,135 @@ send_pane_input() {
     fi
 }
 
-# Get next pane index for a role
-get_next_pane_index() {
+# Get next agent index for a role
+# Counts existing entries in the object-based registry with matching role
+get_next_agent_index() {
     local role="$1"
     require_project
 
     local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
-    if [[ ! -f "$registry" ]]; then
+    if [[ ! -f "$registry" ]] || [[ ! -s "$registry" ]]; then
         echo "0"
         return
     fi
 
-    # Count existing panes with this role
-    # Note: grep -c outputs "0" and exits with 1 when no matches, so we use || true
-    # to suppress the exit code without adding extra output
+    # Count keys that start with role- pattern using jq
     local count
-    count=$(grep -c "\"role\": \"$role\"" "$registry" 2>/dev/null || true)
+    if command -v jq &>/dev/null; then
+        count=$(jq --arg role "$role" '[keys[] | select(startswith($role + "-"))] | length' "$registry" 2>/dev/null || echo 0)
+    else
+        # Fallback: count matches of "role-" pattern in keys
+        count=$(grep -c "\"${role}-[0-9]*\":" "$registry" 2>/dev/null || echo 0)
+    fi
     # Ensure we have a valid number
     [[ -z "$count" || ! "$count" =~ ^[0-9]+$ ]] && count=0
     echo "$count"
 }
 
-# Register a pane
+# Look up ticket assigned to an agent by scanning tickets
+# Usage: get_agent_ticket <agent-id>
+# Returns: ticket ID or empty string if not assigned
+get_agent_ticket() {
+    local agent_id="$1"
+    require_project
+
+    # Scan MAIN tickets (canonical source of truth for observability)
+    for ticket_file in "$MAIN_TICKETS_DIR"/*.md; do
+        [[ -f "$ticket_file" ]] || continue
+        local assigned
+        assigned=$(get_frontmatter_value "$ticket_file" "assigned_agent_id" 2>/dev/null)
+        if [[ "$assigned" == "$agent_id" ]]; then
+            basename "$ticket_file" .md
+            return
+        fi
+    done
+}
+
+# Register a pane in the object-based registry
+# Usage: register_pane <agent-id> <role> <tmux-pane-id>
+# Registry format: { "agent-id": { "role": "...", "tmux_pane_id": "...", "started_at": "..." } }
 register_pane() {
-    local pane_id="$1"
+    local agent_id="$1"
     local role="$2"
-    local ticket_id="${3:-}"
-    local tmux_index="${4:-}"
+    local tmux_pane_id="${3:-}"
 
     require_project
     local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
 
     # Initialize registry if needed
-    if [[ ! -f "$registry" ]]; then
-        echo "[]" > "$registry"
+    if [[ ! -f "$registry" ]] || [[ ! -s "$registry" ]]; then
+        echo "{}" >"$registry"
     fi
 
     local now
     now=$(timestamp)
-    local entry="{\"pane\": \"$pane_id\", \"role\": \"$role\", \"ticket\": \"$ticket_id\", \"tmux_index\": \"$tmux_index\", \"started_at\": \"$now\"}"
 
-    # Add to registry (simple append approach)
-    local content
-    content=$(cat "$registry")
-    if [[ "$content" == "[]" ]]; then
-        echo "[$entry]" > "$registry"
+    # Add entry to object using jq
+    if command -v jq &>/dev/null; then
+        local temp
+        temp=$(mktemp)
+        jq --arg id "$agent_id" \
+            --arg role "$role" \
+            --arg pane_id "$tmux_pane_id" \
+            --arg started "$now" \
+            '.[$id] = {"role": $role, "tmux_pane_id": $pane_id, "started_at": $started}' \
+            "$registry" >"$temp" && mv "$temp" "$registry"
     else
-        # Remove trailing ] and add new entry
-        echo "${content%]}, $entry]" > "$registry"
+        # Fallback without jq: simple append (less reliable)
+        local content
+        content=$(cat "$registry")
+        local entry="\"$agent_id\": {\"role\": \"$role\", \"tmux_pane_id\": \"$tmux_pane_id\", \"started_at\": \"$now\"}"
+        if [[ "$content" == "{}" ]]; then
+            echo "{$entry}" >"$registry"
+        else
+            # Insert before closing brace
+            echo "${content%\}}, $entry}" >"$registry"
+        fi
     fi
 }
 
-# Unregister a pane
+# Unregister an agent from the object-based registry
+# Usage: unregister_pane <agent-id>
 unregister_pane() {
-    local pane_id="$1"
+    local agent_id="$1"
     require_project
 
     local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
     [[ -f "$registry" ]] || return 0
 
-    # Filter out the pane (simple grep -v approach)
-    local temp
-    temp=$(mktemp)
-    grep -v "\"pane\": \"$pane_id\"" "$registry" > "$temp" 2>/dev/null || echo "[]" > "$temp"
-
-    # Fix JSON if needed
-    local content
-    content=$(cat "$temp")
-    if [[ -z "$content" ]] || [[ "$content" == *","* && ! "$content" == *"{"* ]]; then
-        echo "[]" > "$registry"
+    # Delete key from object using jq
+    if command -v jq &>/dev/null; then
+        local temp
+        temp=$(mktemp)
+        jq --arg id "$agent_id" 'del(.[$id])' "$registry" >"$temp" && mv "$temp" "$registry"
     else
+        # Fallback: recreate without the entry (less reliable)
+        local temp
+        temp=$(mktemp)
+        grep -v "\"$agent_id\":" "$registry" >"$temp" 2>/dev/null || echo "{}" >"$temp"
         mv "$temp" "$registry"
     fi
-    rm -f "$temp"
 }
 
-# Look up tmux pane index from registry by agent name
-# Usage: get_pane_tmux_index <pane-name>
-# Returns: tmux pane index or empty string if not found
-get_pane_tmux_index() {
-    local pane_name="$1"
+# Look up tmux pane ID from registry by agent ID
+# Usage: get_tmux_pane_id <agent-id>
+# Returns: tmux pane ID (e.g., %5) or empty string if not found
+get_tmux_pane_id() {
+    local agent_id="$1"
+    require_project
     local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
 
     [[ -f "$registry" ]] || return 0
 
-    local entry
-    entry=$(grep "\"pane\": \"$pane_name\"" "$registry" 2>/dev/null || true)
-    if [[ -n "$entry" ]]; then
-        echo "$entry" | grep -o '"tmux_index": "[^"]*"' | cut -d'"' -f4
+    if command -v jq &>/dev/null; then
+        jq -r --arg id "$agent_id" '.[$id].tmux_pane_id // empty' "$registry" 2>/dev/null
+    else
+        # Fallback: grep for the entry
+        local entry
+        entry=$(grep "\"$agent_id\":" "$registry" 2>/dev/null || true)
+        if [[ -n "$entry" ]]; then
+            echo "$entry" | grep -o '"tmux_pane_id": "[^"]*"' | cut -d'"' -f4
+        fi
     fi
 }
 
@@ -191,7 +232,7 @@ cmd_spawn() {
     shift
 
     local ticket_id="${1:-}"
-    [[ "$ticket_id" == --* ]] && ticket_id=""  # Handle flags
+    [[ "$ticket_id" == --* ]] && ticket_id="" # Handle flags
 
     require_project
     load_config
@@ -221,58 +262,51 @@ cmd_spawn() {
         ticket_id=$(resolve_ticket_id "$ticket_id") || exit "$EXIT_TICKET_NOT_FOUND"
     fi
 
-    # Build pane name
-    local pane_index
-    pane_index=$(get_next_pane_index "$role")
+    # Build agent_id
+    local agent_index
+    agent_index=$(get_next_pane_index "$role")
     # Strip any whitespace/newlines that might have crept in
-    pane_index="${pane_index//[$'\t\r\n ']/}"
-    local pane_name="${role}-${pane_index}"
+    agent_index="${pane_index//[$'\t\r\n ']/}"
+    local agent_id="${role}-${agent_index}"
 
     # Build the agent command
     local agent_cmd="$WIGGUM_AGENT_CMD"
 
-    # Create a worktree for the agent
-    local worktree_path="$PROJECT_ROOT/worktrees/$pane_name"
+    # Create a worktree for the agent (always under main project)
+    local worktree_path="$MAIN_PROJECT_ROOT/worktrees/$agent_id"
     if [[ ! -d "$worktree_path" ]]; then
-        info "Creating worktree for $pane_name..."
-        mkdir -p "$PROJECT_ROOT/worktrees"
-        git worktree add "$worktree_path" -b "$pane_name" --quiet 2>/dev/null || \
-            git worktree add "$worktree_path" "$pane_name" --quiet 2>/dev/null || true
+        info "Creating worktree for $agent_id..."
+        mkdir -p "$MAIN_PROJECT_ROOT/worktrees"
+        git worktree add "$worktree_path" -b "$agent_id" --quiet 2>/dev/null ||
+            git worktree add "$worktree_path" "$agent_id" --quiet 2>/dev/null || true
 
-        # Create .wiggum directory structure in worktree
-        mkdir -p "$worktree_path/.wiggum/hooks"
-        mkdir -p "$worktree_path/.wiggum/prompts"
+        # Create .wiggum directory in worktree (for tickets clone and current_prompt.md)
+        mkdir -p "$worktree_path/.wiggum"
 
         # Clone tickets repo into worktree (optional - may not have bare repo)
         clone_tickets_to_worktree "$worktree_path/.wiggum" || true
-
-        # Copy hooks and prompts
-        # shellcheck disable=SC2015
-        [[ -d "$WIGGUM_DIR/hooks" ]] && cp -r "$WIGGUM_DIR/hooks/"* "$worktree_path/.wiggum/hooks/" 2>/dev/null || true
-        # shellcheck disable=SC2015
-        [[ -d "$WIGGUM_DIR/prompts" ]] && cp -r "$WIGGUM_DIR/prompts/"* "$worktree_path/.wiggum/prompts/" 2>/dev/null || true
     fi
 
     # Create new pane
-    info "Spawning $pane_name${ticket_id:+ for $ticket_id}..."
+    info "Spawning $agent_id${ticket_id:+ for $ticket_id}..."
 
-    local new_pane
+    local tmux_pane_id
     if [[ "$new_session" == "true" ]]; then
-        # Reuse the initial pane created with the session
-        new_pane=0
+        # Reuse the initial pane created with the session - get its pane_id
+        tmux_pane_id=$(tmux display-message -t "$WIGGUM_SESSION:main" -p '#{pane_id}')
     else
         # Split window to create new pane
         tmux split-window -t "$WIGGUM_SESSION:main" -h
-        new_pane=$(tmux display-message -t "$WIGGUM_SESSION:main" -p '#{pane_index}')
+        tmux_pane_id=$(tmux display-message -t "$WIGGUM_SESSION:main" -p '#{pane_id}')
     fi
 
     # Set pane title (include ticket if assigned)
-    local pane_title="$pane_name"
-    [[ -n "$ticket_id" ]] && pane_title="$pane_name:$ticket_id"
-    tmux select-pane -t "$WIGGUM_SESSION:main.$new_pane" -T "$pane_title"
+    local pane_title="$agent_id"
+    [[ -n "$ticket_id" ]] && pane_title="$agent_id:$ticket_id"
+    tmux select-pane -t "$tmux_pane_id" -T "$pane_title"
 
     # Change to worktree directory
-    tmux send-keys -t "$WIGGUM_SESSION:main.$new_pane" "cd '$worktree_path'" Enter
+    tmux send-keys -t "$tmux_pane_id" "cd '$worktree_path'" Enter
 
     # Build the agent prompt
     local prompt
@@ -280,23 +314,23 @@ cmd_spawn() {
 
     # Write prompt to a file in the worktree for the agent to read
     local prompt_file="$worktree_path/.wiggum/current_prompt.md"
-    echo "$prompt" > "$prompt_file"
+    echo "$prompt" >"$prompt_file"
 
     # Start the agent
-    tmux send-keys -t "$WIGGUM_SESSION:main.$new_pane" "$agent_cmd" Enter
+    tmux send-keys -t "$tmux_pane_id" "$agent_cmd" Enter
 
     # Wait for agent to initialize (give it time to show welcome banner)
     sleep 4
 
     # Send the initial prompt using vim-safe input
     local initial_msg="Please read your role instructions from .wiggum/current_prompt.md and begin your work. Your role is: $role${ticket_id:+, assigned ticket: $ticket_id}"
-    send_pane_input "$WIGGUM_SESSION:main.$new_pane" "$initial_msg"
+    send_pane_input "$tmux_pane_id" "$initial_msg"
 
     # Apply layout
     tmux select-layout -t "$WIGGUM_SESSION:main" "$WIGGUM_LAYOUT" 2>/dev/null || true
 
-    # Register the pane
-    register_pane "$pane_name" "$role" "$ticket_id" "$new_pane"
+    # Register the pane (agent_id -> tmux_pane_id mapping)
+    register_pane "$agent_id" "$role" "$tmux_pane_id"
 
     # Start work on ticket if it's ready (assigning a ticket to any agent starts it)
     if [[ -n "$ticket_id" ]]; then
@@ -304,7 +338,7 @@ cmd_spawn() {
         current_state=$(get_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "state")
         if [[ "$current_state" == "ready" ]]; then
             set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "state" "in-progress"
-            set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "assigned_pane" "$pane_name"
+            set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "assigned_agent_id" "$agent_id"
             set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "assigned_at" "$(timestamp)"
             run_hook "on-claim" "$ticket_id"
         fi
@@ -312,24 +346,24 @@ cmd_spawn() {
 
     # Show success message only when interactive (TTY)
     if [[ -t 1 ]]; then
-        success "Spawned $pane_name"
+        success "Spawned $agent_id"
     fi
-    echo "$pane_name"
+    echo "$agent_id"
 }
 
-# List active panes
+# List active agents
 cmd_list() {
     local format="table"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --format)
-                format="$2"
-                shift 2
-                ;;
-            *)
-                shift
-                ;;
+        --format)
+            format="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
         esac
     done
 
@@ -344,82 +378,84 @@ cmd_list() {
     local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
 
     case "$format" in
-        json)
-            if [[ -f "$registry" ]]; then
-                cat "$registry"
-            else
-                echo "[]"
-            fi
-            ;;
-        ids)
-            if [[ -f "$registry" ]]; then
-                grep -o '"pane": "[^"]*"' "$registry" | cut -d'"' -f4
-            fi
-            ;;
-        table|*)
-            echo ""
-            printf "${BOLD}%-12s %-12s %-12s %-10s${NC}\n" "PANE" "ROLE" "TICKET" "UPTIME"
-            echo "------------------------------------------------"
+    json)
+        if [[ -f "$registry" ]]; then
+            cat "$registry"
+        else
+            echo "{}"
+        fi
+        ;;
+    ids)
+        # List agent IDs (object keys)
+        if [[ -f "$registry" ]] && command -v jq &>/dev/null; then
+            jq -r 'keys[]' "$registry" 2>/dev/null
+        elif [[ -f "$registry" ]]; then
+            grep -o '"[^"]*":' "$registry" | tr -d '":' | grep -v '^$'
+        fi
+        ;;
+    table | *)
+        echo ""
+        printf "${BOLD}%-12s %-12s %-12s %-10s${NC}\n" "AGENT" "ROLE" "TICKET" "UPTIME"
+        echo "------------------------------------------------"
 
-            if [[ -f "$registry" ]] && command -v jq &>/dev/null; then
-                # Use jq for proper JSON parsing
-                local count
-                count=$(jq 'length' "$registry")
-                for ((i=0; i<count; i++)); do
-                    local pane role ticket started uptime
-                    pane=$(jq -r ".[$i].pane" "$registry")
-                    role=$(jq -r ".[$i].role" "$registry")
-                    ticket=$(jq -r ".[$i].ticket // empty" "$registry")
-                    started=$(jq -r ".[$i].started_at" "$registry")
+        if [[ -f "$registry" ]] && command -v jq &>/dev/null; then
+            # Use jq for proper JSON parsing of object-based registry
+            local keys
+            keys=$(jq -r 'keys[]' "$registry" 2>/dev/null)
+            for agent_id in $keys; do
+                local role started uptime ticket
+                role=$(jq -r --arg id "$agent_id" '.[$id].role' "$registry")
+                started=$(jq -r --arg id "$agent_id" '.[$id].started_at' "$registry")
+                uptime=$(duration_since "$started")
+                # Get ticket from tickets (single source of truth)
+                ticket=$(get_agent_ticket "$agent_id")
+                printf "%-12s %-12s %-12s %-10s\n" "$agent_id" "$role" "${ticket:-—}" "$uptime"
+            done
+        elif [[ -f "$registry" ]]; then
+            # Fallback: parse JSON without jq (less reliable)
+            warn "jq not found, using basic parsing"
+            # Extract agent IDs from object keys
+            local agent_ids
+            agent_ids=$(grep -o '"[^"]*":' "$registry" | tr -d '":' | grep -v '^$')
+            for agent_id in $agent_ids; do
+                # Basic extraction - look for the agent's entry
+                local role started uptime ticket
+                local entry
+                entry=$(grep -o "\"$agent_id\":[^}]*}" "$registry" 2>/dev/null || true)
+                role=$(echo "$entry" | grep -o '"role"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
+                started=$(echo "$entry" | grep -o '"started_at"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
+                if [[ -n "$role" ]]; then
                     uptime=$(duration_since "$started")
-                    printf "%-12s %-12s %-12s %-10s\n" "$pane" "$role" "${ticket:-—}" "$uptime"
-                done
-            elif [[ -f "$registry" ]]; then
-                # Fallback: parse JSON without jq (less reliable)
-                warn "jq not found, using basic parsing"
-                # Extract each object by matching balanced braces
-                local content
-                content=$(cat "$registry")
-                while [[ "$content" =~ \{([^}]+)\} ]]; do
-                    local obj="${BASH_REMATCH[1]}"
-                    local pane role ticket started uptime
-                    pane=$(echo "$obj" | grep -o '"pane"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
-                    role=$(echo "$obj" | grep -o '"role"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
-                    ticket=$(echo "$obj" | grep -o '"ticket"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
-                    started=$(echo "$obj" | grep -o '"started_at"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
-                    if [[ -n "$pane" ]]; then
-                        uptime=$(duration_since "$started")
-                        printf "%-12s %-12s %-12s %-10s\n" "$pane" "$role" "${ticket:-—}" "$uptime"
-                    fi
-                    # Remove processed object from content
-                    content="${content#*\}}"
-                done
-            fi
-            echo ""
-            ;;
+                    ticket=$(get_agent_ticket "$agent_id")
+                    printf "%-12s %-12s %-12s %-10s\n" "$agent_id" "$role" "${ticket:-—}" "$uptime"
+                fi
+            done
+        fi
+        echo ""
+        ;;
     esac
 }
 
-# Kill a worker pane
+# Kill an agent pane
 cmd_kill() {
     if [[ $# -lt 1 ]]; then
-        error "Usage: wiggum kill <pane-id> [--release-ticket]"
+        error "Usage: wiggum kill <agent-id> [--release-ticket]"
         exit "$EXIT_INVALID_ARGS"
     fi
 
-    local pane_id="$1"
+    local agent_id="$1"
     shift
     local release_ticket=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --release-ticket|--release)
-                release_ticket=true
-                shift
-                ;;
-            *)
-                shift
-                ;;
+        --release-ticket | --release)
+            release_ticket=true
+            shift
+            ;;
+        *)
+            shift
+            ;;
         esac
     done
 
@@ -431,47 +467,41 @@ cmd_kill() {
         exit "$EXIT_SESSION_NOT_FOUND"
     fi
 
-    # Find pane in registry
-    local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
-    local ticket_id=""
-    local target_pane=""
+    # Get tmux pane ID from registry
+    local tmux_pane_id
+    tmux_pane_id=$(get_tmux_pane_id "$agent_id")
 
-    if [[ -f "$registry" ]]; then
-        local entry
-        entry=$(grep "\"pane\": \"$pane_id\"" "$registry" || true)
-        if [[ -n "$entry" ]]; then
-            ticket_id=$(echo "$entry" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
-            target_pane=$(echo "$entry" | grep -o '"tmux_index": "[^"]*"' | cut -d'"' -f4)
-        fi
-    fi
+    # Get ticket from tickets (single source of truth)
+    local ticket_id
+    ticket_id=$(get_agent_ticket "$agent_id")
 
-    # Kill the tmux pane by stored index
-    if [[ -n "$target_pane" ]]; then
-        tmux kill-pane -t "$WIGGUM_SESSION:main.$target_pane" 2>/dev/null && \
+    # Kill the tmux pane by pane ID
+    if [[ -n "$tmux_pane_id" ]]; then
+        tmux kill-pane -t "$tmux_pane_id" 2>/dev/null &&
             info "Killed tmux pane"
     fi
 
     # Unregister
-    unregister_pane "$pane_id"
+    unregister_pane "$agent_id"
 
     # Release ticket if requested
     if [[ "$release_ticket" == "true" ]] && [[ -n "$ticket_id" ]]; then
         set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "state" "ready"
-        set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "assigned_pane" ""
+        set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "assigned_agent_id" ""
         info "Released ticket $ticket_id"
     fi
 
-    success "Killed $pane_id"
+    success "Killed $agent_id"
 }
 
-# Send a message to a worker pane
+# Send a message to an agent pane
 cmd_ping() {
     if [[ $# -lt 2 ]]; then
-        error "Usage: wiggum ping <pane-id> <message>"
+        error "Usage: wiggum ping <agent-id> <message>"
         exit "$EXIT_INVALID_ARGS"
     fi
 
-    local pane_id="$1"
+    local agent_id="$1"
     shift
     local message="$*"
 
@@ -483,19 +513,19 @@ cmd_ping() {
         exit "$EXIT_SESSION_NOT_FOUND"
     fi
 
-    # Look up pane index from registry
-    local target_pane
-    target_pane=$(get_pane_tmux_index "$pane_id")
+    # Look up tmux pane ID from registry
+    local tmux_pane_id
+    tmux_pane_id=$(get_tmux_pane_id "$agent_id")
 
-    if [[ -z "$target_pane" ]]; then
-        # Fallback to direct index if not in registry
-        target_pane="$pane_id"
+    if [[ -z "$tmux_pane_id" ]]; then
+        error "Agent not found in registry: $agent_id"
+        exit "$EXIT_PANE_NOT_FOUND"
     fi
 
     # Send the message using vim-safe input
-    send_pane_input "$WIGGUM_SESSION:main.$target_pane" "$message"
+    send_pane_input "$tmux_pane_id" "$message"
 
-    success "Pinged $pane_id"
+    success "Pinged $agent_id"
 }
 
 # Check if there's capacity for more workers
@@ -506,10 +536,15 @@ cmd_has_capacity() {
     local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
     local current=0
 
-    if [[ -f "$registry" ]]; then
-        current=$(grep -c '"pane":' "$registry" 2>/dev/null || echo 0)
-        # Subtract 1 for supervisor
-        current=$((current > 0 ? current - 1 : 0))
+    if [[ -f "$registry" ]] && command -v jq &>/dev/null; then
+        # Count all entries, subtract supervisors
+        local total supervisors
+        total=$(jq 'keys | length' "$registry" 2>/dev/null || echo 0)
+        supervisors=$(jq '[keys[] | select(startswith("supervisor-"))] | length' "$registry" 2>/dev/null || echo 0)
+        current=$((total - supervisors))
+    elif [[ -f "$registry" ]]; then
+        # Fallback: count keys excluding supervisor-*
+        current=$(grep -c '"worker-\|"reviewer-\|"qa-' "$registry" 2>/dev/null || echo 0)
     fi
 
     if [[ $current -lt $WIGGUM_MAX_AGENTS ]]; then

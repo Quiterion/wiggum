@@ -50,9 +50,12 @@ cmd_init() {
 
     # Set PROJECT_ROOT and WIGGUM_DIR for sync functions
     PROJECT_ROOT="$(pwd)"
+    MAIN_PROJECT_ROOT="$PROJECT_ROOT"
     WIGGUM_DIR="$PROJECT_ROOT/.wiggum"
+    MAIN_WIGGUM_DIR="$WIGGUM_DIR"
     TICKETS_DIR="$WIGGUM_DIR/tickets"
-    export PROJECT_ROOT WIGGUM_DIR TICKETS_DIR
+    MAIN_TICKETS_DIR="$TICKETS_DIR"  # At init, they're the same
+    export PROJECT_ROOT MAIN_PROJECT_ROOT WIGGUM_DIR MAIN_WIGGUM_DIR TICKETS_DIR MAIN_TICKETS_DIR
 
     # Initialize bare tickets repository
     init_bare_tickets_repo
@@ -154,6 +157,7 @@ cmd_teardown() {
         esac
     done
 
+    require_project
     load_config
 
     if ! session_exists "$WIGGUM_SESSION"; then
@@ -164,7 +168,7 @@ cmd_teardown() {
     # Check for active workers unless force
     if [[ "$force" != "true" ]]; then
         local pane_count
-    pane_count=$(tmux list-panes -t "$WIGGUM_SESSION" 2>/dev/null | wc -l)
+        pane_count=$(tmux list-panes -t "$WIGGUM_SESSION" 2>/dev/null | wc -l)
         if [[ $pane_count -gt 1 ]]; then
             warn "Active workers detected. Use --force to kill anyway."
             exit "$EXIT_ERROR"
@@ -173,5 +177,12 @@ cmd_teardown() {
 
     info "Tearing down session: $WIGGUM_SESSION"
     tmux kill-session -t "$WIGGUM_SESSION"
+
+    # Clear the pane registry
+    local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
+    if [[ -f "$registry" ]]; then
+        echo "{}" > "$registry"
+    fi
+
     success "Session terminated"
 }

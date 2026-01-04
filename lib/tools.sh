@@ -44,7 +44,7 @@ cmd_status() {
             agent_count=$(jq 'length' "$registry" 2>/dev/null || echo 0)
         fi
 
-        for ticket_file in "$TICKETS_DIR"/*.md; do
+        for ticket_file in "$MAIN_TICKETS_DIR"/*.md; do
             [[ -f "$ticket_file" ]] || continue
             local s
             s=$(get_frontmatter_value "$ticket_file" "state" 2>/dev/null)
@@ -73,24 +73,25 @@ cmd_status() {
     echo -e "${BOLD}AGENTS:${NC}"
     local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
     if [[ -f "$registry" ]] && [[ -s "$registry" ]] && command -v jq &>/dev/null; then
-        local count
-        count=$(jq 'length' "$registry")
-        if [[ "$count" -gt 0 ]]; then
-            for ((i=0; i<count; i++)); do
-                local pane role ticket started uptime state
-                pane=$(jq -r ".[$i].pane" "$registry")
-                role=$(jq -r ".[$i].role" "$registry")
-                ticket=$(jq -r ".[$i].ticket // empty" "$registry")
-                started=$(jq -r ".[$i].started_at" "$registry")
+        local keys
+        keys=$(jq -r 'keys[]' "$registry" 2>/dev/null)
+        if [[ -n "$keys" ]]; then
+            for agent_id in $keys; do
+                local role started uptime ticket state
+                role=$(jq -r --arg id "$agent_id" '.[$id].role' "$registry")
+                started=$(jq -r --arg id "$agent_id" '.[$id].started_at' "$registry")
                 uptime=$(duration_since "$started")
+
+                # Get ticket from tickets (single source of truth)
+                ticket=$(get_agent_ticket "$agent_id")
 
                 # Get ticket state if available
                 state=""
-                if [[ -n "$ticket" ]] && [[ -f "$TICKETS_DIR/${ticket}.md" ]]; then
-                    state=$(get_frontmatter_value "$TICKETS_DIR/${ticket}.md" "state")
+                if [[ -n "$ticket" ]] && [[ -f "$MAIN_TICKETS_DIR/${ticket}.md" ]]; then
+                    state=$(get_frontmatter_value "$MAIN_TICKETS_DIR/${ticket}.md" "state")
                 fi
 
-                printf "  %-12s %-12s %-12s %-10s\n" "$pane" "${ticket:-—}" "${state:-—}" "$uptime"
+                printf "  %-12s %-12s %-12s %-10s\n" "$agent_id" "${ticket:-—}" "${state:-—}" "$uptime"
             done
         else
             echo "  (no agents)"
@@ -106,7 +107,7 @@ cmd_status() {
     echo -e "${BOLD}TICKETS:${NC}"
     for state in ready in-progress review qa "done"; do
         local count=0
-        for ticket_file in "$TICKETS_DIR"/*.md; do
+        for ticket_file in "$MAIN_TICKETS_DIR"/*.md; do
             [[ -f "$ticket_file" ]] || continue
             local s
     s=$(get_frontmatter_value "$ticket_file" "state")
@@ -120,21 +121,21 @@ cmd_status() {
         echo -e "${BOLD}READY TICKETS:${NC}"
         ticket_ready | while read -r id; do
             local title
-    title=$(grep -m1 '^# ' "$TICKETS_DIR/${id}.md" | sed 's/^# //')
+    title=$(grep -m1 '^# ' "$MAIN_TICKETS_DIR/${id}.md" | sed 's/^# //')
             echo "  $id: $title"
         done
         echo ""
     fi
 }
 
-# Fetch summarized progress from a worker
+# Fetch summarized progress from an agent
 cmd_fetch() {
     if [[ $# -lt 1 ]]; then
-        error "Usage: wiggum fetch <pane-id> [prompt]"
+        error "Usage: wiggum fetch <agent-id> [prompt]"
         exit "$EXIT_INVALID_ARGS"
     fi
 
-    local pane_id="$1"
+    local agent_id="$1"
     shift
     local prompt="${*:-Summarize the current progress and any blockers.}"
 
@@ -146,34 +147,27 @@ cmd_fetch() {
         exit "$EXIT_SESSION_NOT_FOUND"
     fi
 
-    # Look up pane index from registry
-    local target_pane
-    target_pane=$(get_pane_tmux_index "$pane_id")
+    # Look up tmux pane ID from registry
+    local tmux_pane_id
+    tmux_pane_id=$(get_tmux_pane_id "$agent_id")
 
-    if [[ -z "$target_pane" ]]; then
-        # Fallback to direct index
-        target_pane="$pane_id"
+    if [[ -z "$tmux_pane_id" ]]; then
+        error "Agent not found in registry: $agent_id"
+        exit "$EXIT_PANE_NOT_FOUND"
     fi
 
     # Capture pane output
     local pane_output
-    pane_output=$(tmux capture-pane -t "$WIGGUM_SESSION:main.$target_pane" -p -S -100 2>/dev/null)
+    pane_output=$(tmux capture-pane -t "$tmux_pane_id" -p -S -100 2>/dev/null)
 
-    # Get ticket info if available
-    local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
-    local ticket_id=""
+    # Get ticket info from tickets (single source of truth)
+    local ticket_id
     local ticket_content=""
 
-    if [[ -f "$registry" ]]; then
-        local entry
-    entry=$(grep "\"pane\": \"$pane_id\"" "$registry" || true)
-        if [[ -n "$entry" ]]; then
-            ticket_id=$(echo "$entry" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
-        fi
-    fi
+    ticket_id=$(get_agent_ticket "$agent_id")
 
-    if [[ -n "$ticket_id" ]] && [[ -f "$TICKETS_DIR/${ticket_id}.md" ]]; then
-        ticket_content=$(<"$TICKETS_DIR/${ticket_id}.md")
+    if [[ -n "$ticket_id" ]] && [[ -f "$MAIN_TICKETS_DIR/${ticket_id}.md" ]]; then
+        ticket_content=$(<"$MAIN_TICKETS_DIR/${ticket_id}.md")
     fi
 
     # Build context for ephemeral agent
@@ -219,7 +213,7 @@ Provide a concise summary (2-3 sentences max). Focus on:
         echo "Last activity: $last_line"
         if [[ -n "$ticket_id" ]]; then
             local state
-    state=$(get_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "state")
+    state=$(get_frontmatter_value "$MAIN_TICKETS_DIR/${ticket_id}.md" "state")
             echo "Ticket $ticket_id in state: $state"
         fi
     fi
@@ -245,21 +239,21 @@ cmd_digest() {
     # Add agent summaries
     local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
     if [[ -f "$registry" ]] && [[ -s "$registry" ]] && command -v jq &>/dev/null; then
-        local count
-        count=$(jq 'length' "$registry")
-        if [[ "$count" -gt 0 ]]; then
+        local keys
+        keys=$(jq -r 'keys[]' "$registry" 2>/dev/null)
+        if [[ -n "$keys" ]]; then
             context="$context## Active Agents
 
 "
-            for ((i=0; i<count; i++)); do
-                local pane role ticket title
-                pane=$(jq -r ".[$i].pane" "$registry")
-                role=$(jq -r ".[$i].role" "$registry")
-                ticket=$(jq -r ".[$i].ticket // empty" "$registry")
+            for agent_id in $keys; do
+                local role ticket title
+                role=$(jq -r --arg id "$agent_id" '.[$id].role' "$registry")
+                # Get ticket from tickets (single source of truth)
+                ticket=$(get_agent_ticket "$agent_id")
 
-                context="$context- $pane ($role)"
+                context="$context- $agent_id ($role)"
                 if [[ -n "$ticket" ]]; then
-                    title=$(grep -m1 '^# ' "$TICKETS_DIR/${ticket}.md" 2>/dev/null | sed 's/^# //')
+                    title=$(grep -m1 '^# ' "$MAIN_TICKETS_DIR/${ticket}.md" 2>/dev/null | sed 's/^# //')
                     context="$context: $ticket - $title"
                 fi
                 context="$context
@@ -275,7 +269,7 @@ cmd_digest() {
 "
     for state in ready claimed implement review qa "done"; do
         local count=0
-        for ticket_file in "$TICKETS_DIR"/*.md; do
+        for ticket_file in "$MAIN_TICKETS_DIR"/*.md; do
             [[ -f "$ticket_file" ]] || continue
             local s
     s=$(get_frontmatter_value "$ticket_file" "state")
@@ -302,14 +296,14 @@ Provide a brief executive summary.
     fi
 }
 
-# Show raw pane logs
+# Show raw agent pane logs
 cmd_logs() {
     if [[ $# -lt 1 ]]; then
-        error "Usage: wiggum logs <pane-id> [--tail N] [--follow]"
+        error "Usage: wiggum logs <agent-id> [--tail N] [--follow]"
         exit "$EXIT_INVALID_ARGS"
     fi
 
-    local pane_id="$1"
+    local agent_id="$1"
     shift
     local tail_lines=50
     local follow=false
@@ -338,26 +332,26 @@ cmd_logs() {
         exit "$EXIT_SESSION_NOT_FOUND"
     fi
 
-    # Look up pane index from registry
-    local target_pane
-    target_pane=$(get_pane_tmux_index "$pane_id")
+    # Look up tmux pane ID from registry
+    local tmux_pane_id
+    tmux_pane_id=$(get_tmux_pane_id "$agent_id")
 
-    if [[ -z "$target_pane" ]]; then
-        # Fallback to direct index
-        target_pane="$pane_id"
+    if [[ -z "$tmux_pane_id" ]]; then
+        error "Agent not found in registry: $agent_id"
+        exit "$EXIT_PANE_NOT_FOUND"
     fi
 
     if [[ "$follow" == "true" ]]; then
         # Attach in view mode
-        tmux capture-pane -t "$WIGGUM_SESSION:main.$target_pane" -p -S -"$tail_lines"
+        tmux capture-pane -t "$tmux_pane_id" -p -S -"$tail_lines"
         echo "---"
         echo "(Following... Ctrl+C to exit)"
         while true; do
             sleep 1
-            tmux capture-pane -t "$WIGGUM_SESSION:main.$target_pane" -p -S -1 2>/dev/null || break
+            tmux capture-pane -t "$tmux_pane_id" -p -S -1 2>/dev/null || break
         done
     else
-        tmux capture-pane -t "$WIGGUM_SESSION:main.$target_pane" -p -S -"$tail_lines"
+        tmux capture-pane -t "$tmux_pane_id" -p -S -"$tail_lines"
     fi
 }
 
@@ -375,7 +369,7 @@ cmd_context() {
 
     require_project
 
-    local ticket_path="$TICKETS_DIR/${id}.md"
+    local ticket_path="$MAIN_TICKETS_DIR/${id}.md"
 
     # Build context
     local context
@@ -396,11 +390,11 @@ $(<"$ticket_path")
 "
         for dep in $deps; do
             [[ -z "$dep" ]] && continue
-            if [[ -f "$TICKETS_DIR/${dep}.md" ]]; then
+            if [[ -f "$MAIN_TICKETS_DIR/${dep}.md" ]]; then
                 local dep_state
-    dep_state=$(get_frontmatter_value "$TICKETS_DIR/${dep}.md" "state")
+    dep_state=$(get_frontmatter_value "$MAIN_TICKETS_DIR/${dep}.md" "state")
                 local dep_title
-    dep_title=$(grep -m1 '^# ' "$TICKETS_DIR/${dep}.md" | sed 's/^# //')
+    dep_title=$(grep -m1 '^# ' "$MAIN_TICKETS_DIR/${dep}.md" | sed 's/^# //')
                 context="$context- $dep [$dep_state]: $dep_title
 "
             fi

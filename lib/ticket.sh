@@ -226,7 +226,7 @@ id: $id
 type: $type
 priority: $priority
 state: $state
-assigned_pane:
+assigned_agent_id:
 assigned_at:
 $(echo -e "$deps_yaml")
 blocks: []
@@ -613,8 +613,8 @@ ticket_transition() {
     export WIGGUM_TICKET_PATH="$ticket_path"
     export WIGGUM_PREV_STATE="$current_state"
     export WIGGUM_NEW_STATE="$new_state"
-    WIGGUM_PANE=$(get_frontmatter_value "$ticket_path" "assigned_pane")
-    export WIGGUM_PANE
+    WIGGUM_AGENT_ID=$(get_frontmatter_value "$ticket_path" "assigned_agent_id")
+    export WIGGUM_AGENT_ID
 
     # Run hook
     if [[ "$skip_hooks" != "true" ]] && [[ -n "$hook_name" ]]; then
@@ -693,13 +693,17 @@ $message
     # Sync after write operation
     ticket_sync_push "Feedback on $id from $source" 2>/dev/null || true
 
-    # Ping assigned pane if any
-    local pane
-    pane=$(get_frontmatter_value "$ticket_path" "assigned_pane")
-    if [[ -n "$pane" ]]; then
+    # Ping assigned agent if any
+    local agent_id
+    agent_id=$(get_frontmatter_value "$ticket_path" "assigned_agent_id")
+    if [[ -n "$agent_id" ]]; then
         load_config
         if session_exists "$WIGGUM_SESSION"; then
-            tmux send-keys -t "$WIGGUM_SESSION:main" "# Feedback added to your ticket. Please address." Enter 2>/dev/null || true
+            local tmux_pane_id
+            tmux_pane_id=$(get_tmux_pane_id "$agent_id")
+            if [[ -n "$tmux_pane_id" ]]; then
+                send_pane_input "$tmux_pane_id" "# Feedback added to your ticket. Please address."
+            fi
         fi
     fi
 
