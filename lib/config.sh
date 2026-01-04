@@ -55,23 +55,25 @@ write_default_config() {
 #
 # ralphs configuration
 #
+# Note: Environment variables take precedence over these defaults
+#
 
 # Session name for tmux
-RALPHS_SESSION="ralphs-${dirname}"
+: "\${RALPHS_SESSION:=ralphs-${dirname}}"
 
 # Max concurrent worker panes
-RALPHS_MAX_WORKERS=4
+: "\${RALPHS_MAX_WORKERS:=4}"
 
 # Poll interval for supervisor (seconds)
-RALPHS_POLL_INTERVAL=10
+: "\${RALPHS_POLL_INTERVAL:=10}"
 
 # Inner harness command (claude, amp, aider, etc.)
-RALPHS_AGENT_CMD="claude"
+: "\${RALPHS_AGENT_CMD:=claude}"
 
 # tmux pane layout
-RALPHS_LAYOUT="tiled"
+: "\${RALPHS_LAYOUT:=tiled}"
 
 # Editor for ticket editing
-RALPHS_EDITOR="\${EDITOR:-vim}"
+: "\${RALPHS_EDITOR:=\${EDITOR:-vim}}"
 EOF
 }
