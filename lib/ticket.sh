@@ -591,7 +591,7 @@ ticket_transition() {
     local hook_name=""
     case "$new_state" in
         review)
-            hook_name="on-implement-done"
+            hook_name="on-in-progress-done"
             ;;
         qa)
             hook_name="on-review-done"

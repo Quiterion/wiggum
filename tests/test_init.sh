@@ -15,45 +15,45 @@ source "$SCRIPT_DIR/framework.sh"
 #
 
 test_init_creates_ralphs_dir() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     assert_dir_exists ".ralphs" "Init should create .ralphs directory"
 }
 
 test_init_creates_config() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     assert_file_exists ".ralphs/config.sh" "Init should create config.sh"
 }
 
 test_init_creates_tickets_dir() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     assert_dir_exists ".ralphs/tickets" "Init should create tickets directory"
 }
 
 test_init_creates_hooks_dir() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     assert_dir_exists ".ralphs/hooks" "Init should create hooks directory"
 }
 
 test_init_creates_prompts_dir() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     assert_dir_exists ".ralphs/prompts" "Init should create prompts directory"
 }
 
 test_init_copies_default_hooks() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     assert_file_exists ".ralphs/hooks/on-claim" "Init should copy on-claim hook"
-    assert_file_exists ".ralphs/hooks/on-implement-done" "Init should copy on-implement-done hook"
+    assert_file_exists ".ralphs/hooks/on-in-progress-done" "Init should copy on-in-progress-done hook"
 }
 
 test_init_copies_default_prompts() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     assert_file_exists ".ralphs/prompts/supervisor.md" "Init should copy supervisor prompt"
     assert_file_exists ".ralphs/prompts/worker.md" "Init should copy worker prompt"
 }
 
 test_init_idempotent() {
-    "$RALPHS_BIN" init --no-session
-    "$RALPHS_BIN" init --no-session  # Should not fail
+    "$RALPHS_BIN" init
+    "$RALPHS_BIN" init  # Should not fail
     assert_dir_exists ".ralphs"
 }
 
@@ -61,7 +61,7 @@ test_init_from_subdirectory() {
     # Init from subdirectory should create .ralphs at git root
     mkdir -p src/deep/nested
     cd src/deep/nested || exit 1
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     # .ralphs should be at git root, not in subdirectory
     assert_dir_exists "../../../.ralphs" "Init from subdir should create .ralphs at git root"
     assert_not_exists ".ralphs" "Init from subdir should NOT create .ralphs in subdir"
@@ -69,16 +69,16 @@ test_init_from_subdirectory() {
 
 test_init_from_tickets_clone() {
     # Init from inside .ralphs/tickets should use existing project
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     cd .ralphs/tickets || exit 1
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     # Should not create nested .ralphs
     assert_not_exists ".ralphs" "Init from tickets clone should NOT create nested .ralphs"
 }
 
 test_commands_from_subdirectory() {
     # Commands should work from subdirectories
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     mkdir -p src/deep
     cd src/deep || exit 1
     local id

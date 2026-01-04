@@ -9,22 +9,11 @@ session_exists() {
     tmux has-session -t "$session" 2>/dev/null
 }
 
-# Initialize a new ralphs session
+# Initialize a new ralphs project
 cmd_init() {
-    local session_name=""
-    local no_session=false
-
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --session)
-                session_name="$2"
-                shift 2
-                ;;
-            --no-session)
-                no_session=true
-                shift
-                ;;
             *)
                 error "Unknown option: $1"
                 exit "$EXIT_INVALID_ARGS"
@@ -57,7 +46,6 @@ cmd_init() {
         info "Creating ralphs directory structure..."
         mkdir -p "$ralphs_dir/hooks"
         mkdir -p "$ralphs_dir/prompts"
-        mkdir -p "$ralphs_dir/tools"
     fi
 
     # Set PROJECT_ROOT and RALPHS_DIR for sync functions
@@ -91,7 +79,7 @@ cmd_init() {
     fi
 
     # Copy default hooks if not present
-    for hook in on-claim on-implement-done on-review-done on-review-rejected on-qa-done on-qa-rejected on-close; do
+    for hook in on-claim on-in-progress-done on-review-done on-review-rejected on-qa-done on-qa-rejected on-close; do
         if [[ ! -f "$ralphs_dir/hooks/$hook" ]] && [[ -f "$RALPHS_DEFAULTS/hooks/$hook" ]]; then
             cp "$RALPHS_DEFAULTS/hooks/$hook" "$ralphs_dir/hooks/"
             chmod +x "$ralphs_dir/hooks/$hook"
@@ -106,30 +94,6 @@ cmd_init() {
         fi
     done
     success "Prompts initialized"
-
-    # Load config
-    load_config
-
-    # Skip session creation if requested (for testing)
-    if [[ "$no_session" == "true" ]]; then
-        success "ralphs initialized (no session)"
-        return 0
-    fi
-
-    # Override session name if provided
-    [[ -n "$session_name" ]] && RALPHS_SESSION="$session_name"
-
-    # Check for tmux
-    require_command tmux
-
-    # Create tmux session if not exists
-    if session_exists "$RALPHS_SESSION"; then
-        info "Session '$RALPHS_SESSION' already exists"
-    else
-        info "Creating tmux session: $RALPHS_SESSION"
-        tmux new-session -d -s "$RALPHS_SESSION" -n "main"
-        success "Session created"
-    fi
 
     success "ralphs initialized"
     echo ""

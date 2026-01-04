@@ -15,7 +15,7 @@ source "$SCRIPT_DIR/framework.sh"
 # Tests
 #
 
-test_init_creates_session() {
+test_spawn_creates_session() {
     if ! tmux_available; then
         echo "SKIP:tmux not available"
         return 0
@@ -28,11 +28,20 @@ test_init_creates_session() {
     # Ensure cleanup on exit
     trap "cleanup_test_session '$session'" RETURN
 
-    "$RALPHS_BIN" init --session "$session"
+    "$RALPHS_BIN" init
+
+    # Session should NOT exist after init (lazy creation)
+    if tmux has-session -t "$session" 2>/dev/null; then
+        echo "Session should NOT exist after init"
+        return 1
+    fi
+
+    # Spawn supervisor should create session
+    "$RALPHS_BIN" spawn supervisor &>/dev/null
 
     # Verify session exists
     if ! tmux has-session -t "$session" 2>/dev/null; then
-        echo "Session should exist after init"
+        echo "Session should exist after spawn"
         return 1
     fi
 
@@ -40,7 +49,7 @@ test_init_creates_session() {
     cleanup_test_session "$session"
 }
 
-test_init_session_idempotent() {
+test_spawn_session_idempotent() {
     if ! tmux_available; then
         echo "SKIP:tmux not available"
         return 0
@@ -51,8 +60,18 @@ test_init_session_idempotent() {
     export RALPHS_SESSION="$session"
     trap "cleanup_test_session '$session'" RETURN
 
-    "$RALPHS_BIN" init --session "$session"
-    "$RALPHS_BIN" init --session "$session"  # Should not fail
+    "$RALPHS_BIN" init
+    "$RALPHS_BIN" spawn supervisor &>/dev/null
+
+    # Create a ticket for second spawn
+    "$RALPHS_BIN" ticket create "Test ticket" &>/dev/null
+    local ticket_id
+    ticket_id=$("$RALPHS_BIN" ticket ready | head -1)
+
+    # Second spawn should not fail
+    if [[ -n "$ticket_id" ]]; then
+        "$RALPHS_BIN" spawn worker "$ticket_id" &>/dev/null
+    fi
 
     if ! tmux has-session -t "$session" 2>/dev/null; then
         echo "Session should still exist"
@@ -73,7 +92,8 @@ test_teardown_kills_session() {
     export RALPHS_SESSION="$session"
     trap "cleanup_test_session '$session'" RETURN
 
-    "$RALPHS_BIN" init --session "$session"
+    "$RALPHS_BIN" init
+    "$RALPHS_BIN" spawn supervisor &>/dev/null
 
     # Verify it exists
     if ! tmux has-session -t "$session" 2>/dev/null; then
@@ -101,12 +121,12 @@ test_list_panes_empty() {
     export RALPHS_SESSION="$session"
     trap "cleanup_test_session '$session'" RETURN
 
-    "$RALPHS_BIN" init --session "$session"
+    "$RALPHS_BIN" init
 
     local output
     output=$("$RALPHS_BIN" list)
 
-    # Should show table headers at minimum
+    # Should show table headers at minimum (even without session)
     assert_contains "$output" "PANE" "Should show pane column header"
 
     cleanup_test_session "$session"
@@ -123,12 +143,13 @@ test_list_panes_json_format() {
     export RALPHS_SESSION="$session"
     trap "cleanup_test_session '$session'" RETURN
 
-    "$RALPHS_BIN" init --session "$session"
+    "$RALPHS_BIN" init
+    "$RALPHS_BIN" spawn supervisor &>/dev/null
 
     local output
     output=$("$RALPHS_BIN" list --format json)
 
-    # Empty list should be valid JSON array
+    # Should be valid JSON array
     if [[ "$output" != "[]" && "$output" != *"["* ]]; then
         echo "JSON format should return array, got: $output"
         return 1
@@ -148,14 +169,15 @@ test_status_shows_overview() {
     export RALPHS_SESSION="$session"
     trap "cleanup_test_session '$session'" RETURN
 
-    "$RALPHS_BIN" init --session "$session"
+    "$RALPHS_BIN" init
     "$RALPHS_BIN" ticket create "Status test ticket"
 
     local output
     output=$("$RALPHS_BIN" status)
 
-    assert_contains "$output" "Session:" "Should show session info"
-    assert_contains "$output" "Tickets:" "Should show ticket count"
+    # Should show session and ticket info
+    assert_contains "$output" "SESSION:" "Should show session info"
+    assert_contains "$output" "TICKETS:" "Should show ticket count"
 
     cleanup_test_session "$session"
 }
@@ -166,10 +188,10 @@ test_attach_fails_no_session() {
         return 0
     fi
 
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     # Try to attach to non-existent session
-    if "$RALPHS_BIN" attach --session "nonexistent-session-$$" 2>/dev/null; then
+    if "$RALPHS_BIN" attach 2>/dev/null; then
         echo "Attach should fail for non-existent session"
         return 1
     fi
@@ -181,7 +203,7 @@ test_teardown_fails_no_session() {
         return 0
     fi
 
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     # Try to teardown non-existent session
     if "$RALPHS_BIN" teardown 2>/dev/null; then
@@ -195,8 +217,8 @@ test_teardown_fails_no_session() {
 #
 
 TMUX_TESTS=(
-    "Tmux init creates session:test_init_creates_session"
-    "Tmux init session idempotent:test_init_session_idempotent"
+    "Tmux spawn creates session:test_spawn_creates_session"
+    "Tmux spawn session idempotent:test_spawn_session_idempotent"
     "Tmux teardown kills session:test_teardown_kills_session"
     "Tmux list panes empty:test_list_panes_empty"
     "Tmux list panes json:test_list_panes_json_format"

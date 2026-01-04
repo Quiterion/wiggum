@@ -17,19 +17,19 @@ source "$SCRIPT_DIR/framework.sh"
 #
 
 test_init_creates_bare_repo() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     assert_dir_exists ".ralphs/tickets.git" "Init should create bare repo"
     assert_dir_exists ".ralphs/tickets.git/objects" "Bare repo should have objects dir"
 }
 
 test_init_creates_tickets_clone() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     assert_dir_exists ".ralphs/tickets" "Init should create tickets clone"
     assert_dir_exists ".ralphs/tickets/.git" "Tickets dir should be a git clone"
 }
 
 test_init_has_pre_receive_hook() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     assert_file_exists ".ralphs/tickets.git/hooks/pre-receive" "Should install pre-receive hook"
 
     # Check it's executable
@@ -40,7 +40,7 @@ test_init_has_pre_receive_hook() {
 }
 
 test_init_has_post_receive_hook() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     assert_file_exists ".ralphs/tickets.git/hooks/post-receive" "Should install post-receive hook"
 
     # Check it's executable
@@ -51,7 +51,7 @@ test_init_has_post_receive_hook() {
 }
 
 test_init_updates_gitignore() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     assert_file_exists ".gitignore" ".gitignore should exist"
 
@@ -63,7 +63,7 @@ test_init_updates_gitignore() {
 }
 
 test_init_creates_initial_commit() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     # Check local clone has initial commit
     local log
@@ -72,7 +72,7 @@ test_init_creates_initial_commit() {
 }
 
 test_ticket_sync_command_exists() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     local output
     output=$("$RALPHS_BIN" ticket sync 2>&1)
@@ -85,7 +85,7 @@ test_ticket_sync_command_exists() {
 }
 
 test_ticket_create_syncs_to_repo() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Sync test")
@@ -100,7 +100,7 @@ test_ticket_create_syncs_to_repo() {
 }
 
 test_tickets_have_merge_strategy() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     assert_file_exists ".ralphs/tickets.git/info/attributes" "Should have attributes file"
 

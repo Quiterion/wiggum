@@ -16,7 +16,7 @@ source "$SCRIPT_DIR/framework.sh"
 #
 
 test_fetch_requires_pane_id() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     # fetch without pane-id should fail
     if "$RALPHS_BIN" fetch 2>/dev/null; then
@@ -31,7 +31,7 @@ test_fetch_fails_no_session() {
         return 0
     fi
 
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     # fetch with no session should fail
     if "$RALPHS_BIN" fetch worker-0 2>/dev/null; then
@@ -51,7 +51,8 @@ test_fetch_pane_not_found() {
     export RALPHS_SESSION="$session"
     trap "cleanup_test_session '$session'" RETURN
 
-    "$RALPHS_BIN" init --session "$session"
+    "$RALPHS_BIN" init
+    "$RALPHS_BIN" spawn supervisor &>/dev/null
 
     # fetch non-existent pane should fail
     if "$RALPHS_BIN" fetch nonexistent-pane 2>/dev/null; then
@@ -63,7 +64,7 @@ test_fetch_pane_not_found() {
 }
 
 test_logs_requires_pane_id() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     # logs without pane-id should fail
     if "$RALPHS_BIN" logs 2>/dev/null; then
@@ -78,7 +79,7 @@ test_logs_fails_no_session() {
         return 0
     fi
 
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     # logs with no session should fail
     if "$RALPHS_BIN" logs worker-0 2>/dev/null; then
@@ -93,7 +94,7 @@ test_digest_fails_no_session() {
         return 0
     fi
 
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     # digest with no session should fail
     if "$RALPHS_BIN" digest 2>/dev/null; then
@@ -103,7 +104,7 @@ test_digest_fails_no_session() {
 }
 
 test_context_requires_ticket_id() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     # context without ticket-id should fail
     if "$RALPHS_BIN" context 2>/dev/null; then
@@ -113,7 +114,7 @@ test_context_requires_ticket_id() {
 }
 
 test_context_builds_for_ticket() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Context test" --type feature)
 

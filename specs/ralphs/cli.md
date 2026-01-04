@@ -22,15 +22,11 @@ ralphs
 
 ### ralphs init
 
-Initialize a new ralphs session.
+Initialize a new ralphs project.
 
 ```bash
-ralphs init [--session NAME] [--config PATH]
+ralphs init
 ```
-
-**Flags:**
-- `--session NAME` — tmux session name (default: `ralphs-<dirname>`)
-- `--config PATH` — Path to config file (default: `.ralphs/config.sh`)
 
 **Effects:**
 - Creates `.ralphs/` directory structure at the git repository root:
@@ -39,10 +35,8 @@ ralphs init [--session NAME] [--config PATH]
   - `.ralphs/tickets/` — clone for CLI access
   - `.ralphs/hooks/` — state transition hooks (copied from defaults)
   - `.ralphs/prompts/` — agent prompt templates (copied from defaults)
-- Starts tmux session with initial window
-- Sources configuration
 
-**Note:** Can be run from any subdirectory within the git repository. If already in a ralphs project, uses the existing project.
+**Note:** Does not create a tmux session. The session is created lazily by `ralphs spawn` when first needed. Can be run from any subdirectory within the git repository.
 
 ---
 
@@ -75,7 +69,7 @@ ralphs teardown [--force]
 
 ### ralphs spawn
 
-Spawn an agent in a new pane.
+Spawn an agent in a new pane. Creates the tmux session if it doesn't exist.
 
 ```bash
 ralphs spawn <role> [ticket-id] [--prompt PATH]

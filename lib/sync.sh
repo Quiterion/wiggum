@@ -223,7 +223,7 @@ while read -r oldrev newrev refname; do
         # Trigger appropriate hook via ralphs (background to avoid blocking)
         case "$new_state" in
             review)
-                (cd "$PROJECT_ROOT" && "$RALPHS_BIN" hook run on-implement-done "$ticket_id" 2>/dev/null &)
+                (cd "$PROJECT_ROOT" && "$RALPHS_BIN" hook run on-in-progress-done "$ticket_id" 2>/dev/null &)
                 ;;
             qa)
                 (cd "$PROJECT_ROOT" && "$RALPHS_BIN" hook run on-review-done "$ticket_id" 2>/dev/null &)

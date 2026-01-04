@@ -178,11 +178,12 @@ cmd_spawn() {
 
     require_project
     load_config
+    require_command tmux
 
-    # Validate session
+    # Create session if it doesn't exist
     if ! session_exists "$RALPHS_SESSION"; then
-        error "Session not found. Run 'ralphs init' first."
-        exit "$EXIT_SESSION_NOT_FOUND"
+        info "Creating tmux session: $RALPHS_SESSION"
+        tmux new-session -d -s "$RALPHS_SESSION" -n "main"
     fi
 
     # Supervisor doesn't need a ticket

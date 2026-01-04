@@ -15,7 +15,7 @@ source "$SCRIPT_DIR/framework.sh"
 #
 
 test_ticket_create_basic() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Test ticket")
 
@@ -23,7 +23,7 @@ test_ticket_create_basic() {
 }
 
 test_ticket_create_with_type() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Bug fix" --type bug)
 
@@ -33,7 +33,7 @@ test_ticket_create_with_type() {
 }
 
 test_ticket_create_with_priority() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Urgent task" --priority 1)
 
@@ -43,7 +43,7 @@ test_ticket_create_with_priority() {
 }
 
 test_ticket_create_initial_state() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "New ticket")
 
@@ -53,7 +53,7 @@ test_ticket_create_initial_state() {
 }
 
 test_ticket_create_with_dependency() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local dep_id
     dep_id=$("$RALPHS_BIN" ticket create "Dependency")
 
@@ -66,7 +66,7 @@ test_ticket_create_with_dependency() {
 }
 
 test_ticket_create_has_title() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "My awesome feature")
 
@@ -80,7 +80,7 @@ test_ticket_create_has_title() {
 #
 
 test_ticket_list_empty() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local output
     output=$("$RALPHS_BIN" ticket list)
     # Should not fail, may show empty table
@@ -88,7 +88,7 @@ test_ticket_list_empty() {
 }
 
 test_ticket_list_shows_tickets() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     "$RALPHS_BIN" ticket create "First ticket"
     "$RALPHS_BIN" ticket create "Second ticket"
 
@@ -99,7 +99,7 @@ test_ticket_list_shows_tickets() {
 }
 
 test_ticket_list_filter_by_state() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     "$RALPHS_BIN" ticket create "Ready ticket"
 
     local output
@@ -115,7 +115,7 @@ test_ticket_list_filter_by_state() {
 }
 
 test_ticket_list_filter_by_type() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     "$RALPHS_BIN" ticket create "Bug report" --type bug
     "$RALPHS_BIN" ticket create "New feature" --type feature
 
@@ -134,7 +134,7 @@ test_ticket_list_filter_by_type() {
 #
 
 test_ticket_show_displays_content() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Show me")
 
@@ -145,7 +145,7 @@ test_ticket_show_displays_content() {
 }
 
 test_ticket_show_partial_id() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Partial match")
 
@@ -158,7 +158,7 @@ test_ticket_show_partial_id() {
 }
 
 test_ticket_show_not_found() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
 
     if "$RALPHS_BIN" ticket show "nonexistent" 2>/dev/null; then
         echo "Should fail for nonexistent ticket"
@@ -171,7 +171,7 @@ test_ticket_show_not_found() {
 #
 
 test_ticket_claim() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Claim me")
 
@@ -183,7 +183,7 @@ test_ticket_claim() {
 }
 
 test_ticket_claim_sets_timestamp() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Claim with time")
 
@@ -195,7 +195,7 @@ test_ticket_claim_sets_timestamp() {
 }
 
 test_ticket_claim_already_in-progress() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Double claim")
 
@@ -212,7 +212,7 @@ test_ticket_claim_already_in-progress() {
 #
 
 test_ticket_transition_valid() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Transition me")
 
@@ -225,7 +225,7 @@ test_ticket_transition_valid() {
 }
 
 test_ticket_transition_full_workflow() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Full workflow")
 
@@ -241,7 +241,7 @@ test_ticket_transition_full_workflow() {
 }
 
 test_ticket_transition_invalid() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Invalid transition")
 
@@ -253,7 +253,7 @@ test_ticket_transition_invalid() {
 }
 
 test_ticket_transition_review_rejection() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Rejected")
 
@@ -272,7 +272,7 @@ test_ticket_transition_review_rejection() {
 #
 
 test_ticket_ready_lists_unblocked() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     "$RALPHS_BIN" ticket create "Ready ticket"
 
     local output
@@ -281,7 +281,7 @@ test_ticket_ready_lists_unblocked() {
 }
 
 test_ticket_ready_excludes_blocked() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local dep_id
     dep_id=$("$RALPHS_BIN" ticket create "Blocker")
 
@@ -301,7 +301,7 @@ test_ticket_ready_excludes_blocked() {
 }
 
 test_ticket_ready_with_limit() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     "$RALPHS_BIN" ticket create "First"
     "$RALPHS_BIN" ticket create "Second"
     "$RALPHS_BIN" ticket create "Third"
@@ -320,7 +320,7 @@ test_ticket_ready_with_limit() {
 #
 
 test_ticket_blocked_shows_blockers() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local dep_id
     dep_id=$("$RALPHS_BIN" ticket create "Blocker")
 
@@ -339,7 +339,7 @@ test_ticket_blocked_shows_blockers() {
 #
 
 test_ticket_tree_shows_deps() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local dep_id
     dep_id=$("$RALPHS_BIN" ticket create "Dependency")
 
@@ -359,7 +359,7 @@ test_ticket_tree_shows_deps() {
 #
 
 test_ticket_feedback_appends() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Feedback target")
 
@@ -372,7 +372,7 @@ test_ticket_feedback_appends() {
 }
 
 test_ticket_feedback_multiple() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "Multiple feedback")
 
@@ -398,7 +398,7 @@ test_require_project_fails_outside() {
 }
 
 test_id_format() {
-    "$RALPHS_BIN" init --no-session
+    "$RALPHS_BIN" init
     local ticket_id
     ticket_id=$("$RALPHS_BIN" ticket create "ID format test")
 
