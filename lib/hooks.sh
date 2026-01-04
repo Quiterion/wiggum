@@ -53,7 +53,8 @@ list_hooks() {
     if [[ -d "$HOOKS_DIR" ]]; then
         for hook in "$HOOKS_DIR"/*; do
             [[ -f "$hook" ]] || continue
-            local name=$(basename "$hook")
+            local name
+    name=$(basename "$hook")
             local status="inactive"
             [[ -x "$hook" ]] && status="active"
             echo "  $name ($status)"

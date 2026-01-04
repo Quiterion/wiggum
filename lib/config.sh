@@ -26,12 +26,14 @@ load_config() {
     # Source config if it exists
     if [[ -f "$config_path" ]]; then
         debug "Loading config from $config_path"
+        # shellcheck source=/dev/null
         source "$config_path"
     fi
 
     # Set default session name if not set
     if [[ -z "$RALPHS_SESSION" ]]; then
-        local dirname=$(basename "$(pwd)")
+        local dirname
+        dirname=$(basename "$(pwd)")
         RALPHS_SESSION="ralphs-${dirname}"
     fi
 }
@@ -45,7 +47,8 @@ get_session_name() {
 # Write default config file
 write_default_config() {
     local config_path="$1"
-    local dirname=$(basename "$(pwd)")
+    local dirname
+    dirname=$(basename "$(pwd)")
 
     cat > "$config_path" <<EOF
 #!/bin/bash

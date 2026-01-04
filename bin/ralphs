@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC1091
 #
 # ralphs - Multi-Agent Orchestration Harness
 # Version: 0.1.0
@@ -12,16 +13,16 @@ set -euo pipefail
 RALPHS_VERSION="0.1.0"
 RALPHS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RALPHS_LIB="$RALPHS_ROOT/lib"
-RALPHS_DEFAULTS="$RALPHS_ROOT/defaults"
+export RALPHS_DEFAULTS="$RALPHS_ROOT/defaults"
 
-# Exit codes
-EXIT_SUCCESS=0
-EXIT_ERROR=1
-EXIT_INVALID_ARGS=2
-EXIT_SESSION_NOT_FOUND=3
-EXIT_PANE_NOT_FOUND=4
-EXIT_TICKET_NOT_FOUND=5
-EXIT_INVALID_TRANSITION=6
+# Exit codes (exported for use in sourced scripts)
+export EXIT_SUCCESS=0
+export EXIT_ERROR=1
+export EXIT_INVALID_ARGS=2
+export EXIT_SESSION_NOT_FOUND=3
+export EXIT_PANE_NOT_FOUND=4
+export EXIT_TICKET_NOT_FOUND=5
+export EXIT_INVALID_TRANSITION=6
 
 # Source library functions
 source "$RALPHS_LIB/config.sh"
@@ -32,9 +33,9 @@ source "$RALPHS_LIB/tools.sh"
 source "$RALPHS_LIB/hooks.sh"
 source "$RALPHS_LIB/utils.sh"
 
-# Global flags (set by parse_global_flags)
-RALPHS_QUIET=false
-RALPHS_VERBOSE=false
+# Global flags (set by parse_global_flags, used by utils.sh)
+export RALPHS_QUIET=false
+export RALPHS_VERBOSE=false
 
 usage() {
     cat <<EOF

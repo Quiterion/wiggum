@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run shellcheck on bin/
+        run: shellcheck --severity=warning bin/*
+
+      - name: Run shellcheck on lib/
+        run: shellcheck --severity=warning lib/*.sh
+
+      - name: Run shellcheck on hooks
+        run: shellcheck --severity=warning defaults/hooks/*
+
+  test:
+    name: Basic Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test CLI help
+        run: ./bin/ralphs --help
+
+      - name: Test init
+        run: |
+          ./bin/ralphs init
+          test -d .ralphs
+          test -f .ralphs/config.sh
+
+      - name: Test ticket create
+        run: |
+          ./bin/ralphs init
+          TICKET_ID=$(./bin/ralphs ticket create "Test ticket" --type task)
+          test -f ".ralphs/tickets/${TICKET_ID}.md"
+
+      - name: Test ticket list
+        run: |
+          ./bin/ralphs init
+          ./bin/ralphs ticket create "Test ticket"
+          ./bin/ralphs ticket list | grep -q "Test ticket"

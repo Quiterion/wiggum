@@ -143,7 +143,8 @@ cmd_teardown() {
 
     # Check for active workers unless force
     if [[ "$force" != "true" ]]; then
-        local pane_count=$(tmux list-panes -t "$RALPHS_SESSION" 2>/dev/null | wc -l)
+        local pane_count
+    pane_count=$(tmux list-panes -t "$RALPHS_SESSION" 2>/dev/null | wc -l)
         if [[ $pane_count -gt 1 ]]; then
             warn "Active workers detected. Use --force to kill anyway."
             exit $EXIT_ERROR

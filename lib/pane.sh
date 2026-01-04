@@ -18,7 +18,8 @@ get_next_pane_index() {
     fi
 
     # Count existing panes with this role
-    local count=$(grep -c "\"role\": \"$role\"" "$registry" 2>/dev/null || echo 0)
+    local count
+    count=$(grep -c "\"role\": \"$role\"" "$registry" 2>/dev/null || echo 0)
     echo "$count"
 }
 
@@ -36,11 +37,13 @@ register_pane() {
         echo "[]" > "$registry"
     fi
 
-    local now=$(timestamp)
+    local now
+    now=$(timestamp)
     local entry="{\"pane\": \"$pane_id\", \"role\": \"$role\", \"ticket\": \"$ticket_id\", \"started_at\": \"$now\"}"
 
     # Add to registry (simple append approach)
-    local content=$(cat "$registry")
+    local content
+    content=$(cat "$registry")
     if [[ "$content" == "[]" ]]; then
         echo "[$entry]" > "$registry"
     else
@@ -58,11 +61,13 @@ unregister_pane() {
     [[ -f "$registry" ]] || return 0
 
     # Filter out the pane (simple grep -v approach)
-    local temp=$(mktemp)
+    local temp
+    temp=$(mktemp)
     grep -v "\"pane\": \"$pane_id\"" "$registry" > "$temp" 2>/dev/null || echo "[]" > "$temp"
 
     # Fix JSON if needed
-    local content=$(cat "$temp")
+    local content
+    content=$(cat "$temp")
     if [[ -z "$content" ]] || [[ "$content" == *","* && ! "$content" == *"{"* ]]; then
         echo "[]" > "$registry"
     else
@@ -81,24 +86,7 @@ cmd_spawn() {
     local role="$1"
     shift
 
-    local ticket_id=""
-    local custom_prompt=""
-
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --prompt)
-                custom_prompt="$2"
-                shift 2
-                ;;
-            *)
-                if [[ -z "$ticket_id" ]]; then
-                    ticket_id="$1"
-                fi
-                shift
-                ;;
-        esac
-    done
+    local ticket_id="${1:-}"
 
     require_project
     load_config
@@ -120,60 +108,21 @@ cmd_spawn() {
         ticket_id=$(resolve_ticket_id "$ticket_id") || exit $EXIT_TICKET_NOT_FOUND
     fi
 
-    # Determine prompt file
-    local prompt_file=""
-    if [[ -n "$custom_prompt" ]]; then
-        prompt_file="$custom_prompt"
-    elif [[ -f "$PROMPTS_DIR/${role}.md" ]]; then
-        prompt_file="$PROMPTS_DIR/${role}.md"
-    elif [[ -f "$PROMPTS_DIR/implementer.md" ]] && [[ "$role" == "impl" ]]; then
-        prompt_file="$PROMPTS_DIR/implementer.md"
-    elif [[ -f "$RALPHS_DEFAULTS/prompts/${role}.md" ]]; then
-        prompt_file="$RALPHS_DEFAULTS/prompts/${role}.md"
-    fi
-
     # Build pane name
-    local pane_index=$(get_next_pane_index "$role")
+    local pane_index
+    pane_index=$(get_next_pane_index "$role")
     local pane_name="${role}-${pane_index}"
 
     # Build the agent command
     local agent_cmd="$RALPHS_AGENT_CMD"
-
-    # Build context for the agent
-    local context=""
-    if [[ -n "$ticket_id" ]]; then
-        local ticket_path="$TICKETS_DIR/${ticket_id}.md"
-        context="Working on ticket: $ticket_id\n\nTicket content:\n$(cat "$ticket_path")"
-    fi
-
-    # Create the spawn command
-    local spawn_cmd=""
-    if [[ -n "$prompt_file" ]] && [[ -f "$prompt_file" ]]; then
-        # Read prompt and substitute variables
-        local prompt_content=$(cat "$prompt_file")
-        prompt_content="${prompt_content//\{TICKET_ID\}/$ticket_id}"
-        if [[ -n "$ticket_id" ]]; then
-            local ticket_content=$(cat "$TICKETS_DIR/${ticket_id}.md" 2>/dev/null || echo "")
-            # Escape for shell
-            ticket_content=$(echo "$ticket_content" | sed 's/"/\\"/g')
-            prompt_content="${prompt_content//\{TICKET_CONTENT\}/$ticket_content}"
-        fi
-
-        # Write composed prompt to temp file
-        local temp_prompt=$(mktemp /tmp/ralphs-prompt-XXXXXX.md)
-        echo "$prompt_content" > "$temp_prompt"
-
-        spawn_cmd="$agent_cmd --prompt \"$temp_prompt\" && rm -f \"$temp_prompt\""
-    else
-        spawn_cmd="$agent_cmd"
-    fi
 
     # Create new pane
     info "Spawning $pane_name${ticket_id:+ for $ticket_id}..."
 
     # Split window to create new pane
     tmux split-window -t "$RALPHS_SESSION:main" -h
-    local new_pane=$(tmux display-message -t "$RALPHS_SESSION:main" -p '#{pane_index}')
+    local new_pane
+    new_pane=$(tmux display-message -t "$RALPHS_SESSION:main" -p '#{pane_index}')
 
     # Set pane title
     tmux select-pane -t "$RALPHS_SESSION:main.$new_pane" -T "$pane_name"
@@ -190,7 +139,8 @@ cmd_spawn() {
 
     # Update ticket state if claiming
     if [[ -n "$ticket_id" ]] && [[ "$role" == "impl" || "$role" == "implementer" ]]; then
-        local current_state=$(get_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "state")
+        local current_state
+    current_state=$(get_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "state")
         if [[ "$current_state" == "ready" ]]; then
             set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "state" "claimed"
             set_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "assigned_pane" "$pane_name"
@@ -250,14 +200,19 @@ cmd_list() {
             if [[ -f "$registry" ]]; then
                 # Parse each entry (simple approach)
                 while IFS= read -r line; do
-                    local pane=$(echo "$line" | grep -o '"pane": "[^"]*"' | cut -d'"' -f4)
-                    local role=$(echo "$line" | grep -o '"role": "[^"]*"' | cut -d'"' -f4)
-                    local ticket=$(echo "$line" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
-                    local started=$(echo "$line" | grep -o '"started_at": "[^"]*"' | cut -d'"' -f4)
+                    local pane
+    pane=$(echo "$line" | grep -o '"pane": "[^"]*"' | cut -d'"' -f4)
+                    local role
+    role=$(echo "$line" | grep -o '"role": "[^"]*"' | cut -d'"' -f4)
+                    local ticket
+    ticket=$(echo "$line" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
+                    local started
+    started=$(echo "$line" | grep -o '"started_at": "[^"]*"' | cut -d'"' -f4)
 
                     [[ -z "$pane" ]] && continue
 
-                    local uptime=$(duration_since "$started")
+                    local uptime
+    uptime=$(duration_since "$started")
                     printf "%-12s %-12s %-12s %-10s\n" "$pane" "$role" "${ticket:-—}" "$uptime"
                 done < <(cat "$registry" | tr ',' '\n')
             fi
@@ -302,19 +257,23 @@ cmd_kill() {
     local ticket_id=""
 
     if [[ -f "$registry" ]]; then
-        local entry=$(grep "\"pane\": \"$pane_id\"" "$registry" || true)
+        local entry
+    entry=$(grep "\"pane\": \"$pane_id\"" "$registry" || true)
         if [[ -n "$entry" ]]; then
             ticket_id=$(echo "$entry" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
         fi
     fi
 
     # Find and kill the tmux pane by title
-    local panes=$(tmux list-panes -t "$RALPHS_SESSION:main" -F '#{pane_index} #{pane_title}' 2>/dev/null)
+    local panes
+    panes=$(tmux list-panes -t "$RALPHS_SESSION:main" -F '#{pane_index} #{pane_title}' 2>/dev/null)
     local target_pane=""
 
     while IFS= read -r line; do
-        local idx=$(echo "$line" | awk '{print $1}')
-        local title=$(echo "$line" | awk '{print $2}')
+        local idx
+    idx=$(echo "$line" | awk '{print $1}')
+        local title
+    title=$(echo "$line" | awk '{print $2}')
         if [[ "$title" == "$pane_id" ]]; then
             target_pane="$idx"
             break
@@ -359,12 +318,15 @@ cmd_ping() {
     fi
 
     # Find pane by title
-    local panes=$(tmux list-panes -t "$RALPHS_SESSION:main" -F '#{pane_index} #{pane_title}' 2>/dev/null)
+    local panes
+    panes=$(tmux list-panes -t "$RALPHS_SESSION:main" -F '#{pane_index} #{pane_title}' 2>/dev/null)
     local target_pane=""
 
     while IFS= read -r line; do
-        local idx=$(echo "$line" | awk '{print $1}')
-        local title=$(echo "$line" | awk '{print $2}')
+        local idx
+    idx=$(echo "$line" | awk '{print $1}')
+        local title
+    title=$(echo "$line" | awk '{print $2}')
         if [[ "$title" == "$pane_id" ]]; then
             target_pane="$idx"
             break

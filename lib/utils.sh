@@ -51,7 +51,8 @@ debug() {
 # Generate a short random ID (4 hex chars)
 generate_id() {
     local prefix="${1:-tk}"
-    local id=$(printf '%04x' $RANDOM)
+    local id
+    id=$(printf '%04x' $RANDOM)
     echo "${prefix}-${id}"
 }
 
@@ -68,22 +69,28 @@ human_timestamp() {
 # Calculate duration from ISO timestamp to now
 duration_since() {
     local start="$1"
-    local start_epoch=$(date -d "$start" +%s 2>/dev/null || echo 0)
-    local now_epoch=$(date +%s)
-    local diff=$((now_epoch - start_epoch))
+    local start_epoch
+    start_epoch=$(date -d "$start" +%s 2>/dev/null || echo 0)
+    local now_epoch
+    now_epoch=$(date +%s)
+    local diff
+    diff=$((now_epoch - start_epoch))
 
     if [[ $diff -lt 60 ]]; then
         echo "${diff}s"
     elif [[ $diff -lt 3600 ]]; then
         echo "$((diff / 60))m"
     else
-        local hours=$((diff / 3600))
-        local mins=$(((diff % 3600) / 60))
+        local hours
+    hours=$((diff / 3600))
+        local mins
+    mins=$(((diff % 3600) / 60))
         echo "${hours}h ${mins}m"
     fi
 }
 
 # Get project root (directory containing .ralphs/)
+# shellcheck disable=SC2120  # Function accepts optional arg with default
 get_project_root() {
     local dir="${1:-$(pwd)}"
     while [[ "$dir" != "/" ]]; do
@@ -106,6 +113,7 @@ require_project() {
     TICKETS_DIR="$RALPHS_DIR/tickets"
     HOOKS_DIR="$RALPHS_DIR/hooks"
     PROMPTS_DIR="$RALPHS_DIR/prompts"
+    export PROJECT_ROOT RALPHS_DIR TICKETS_DIR HOOKS_DIR PROMPTS_DIR
 }
 
 # Match partial ticket ID
@@ -123,7 +131,8 @@ resolve_ticket_id() {
     local matches=()
     for f in "$TICKETS_DIR"/*.md; do
         [[ -f "$f" ]] || continue
-        local name=$(basename "$f" .md)
+        local name
+    name=$(basename "$f" .md)
         if [[ "$name" == *"$partial"* ]]; then
             matches+=("$name")
         fi
@@ -162,7 +171,8 @@ set_frontmatter_value() {
     local key="$2"
     local value="$3"
 
-    local temp=$(mktemp)
+    local temp
+    temp=$(mktemp)
     awk -v key="$key" -v value="$value" '
         /^---$/ { in_fm = !in_fm; print; next }
         in_fm && $1 == key":" {

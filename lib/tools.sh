@@ -34,7 +34,8 @@ cmd_status() {
         return
     fi
 
-    local pane_count=$(tmux list-panes -t "$RALPHS_SESSION:main" 2>/dev/null | wc -l)
+    local pane_count
+    pane_count=$(tmux list-panes -t "$RALPHS_SESSION:main" 2>/dev/null | wc -l)
     echo "  Panes: $pane_count"
     echo ""
 
@@ -43,14 +44,19 @@ cmd_status() {
     local registry="$PROJECT_ROOT/$PANE_REGISTRY_FILE"
     if [[ -f "$registry" ]] && [[ -s "$registry" ]] && [[ "$(cat "$registry")" != "[]" ]]; then
         while IFS= read -r line; do
-            local pane=$(echo "$line" | grep -o '"pane": "[^"]*"' | cut -d'"' -f4)
-            local role=$(echo "$line" | grep -o '"role": "[^"]*"' | cut -d'"' -f4)
-            local ticket=$(echo "$line" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
-            local started=$(echo "$line" | grep -o '"started_at": "[^"]*"' | cut -d'"' -f4)
+            local pane
+    pane=$(echo "$line" | grep -o '"pane": "[^"]*"' | cut -d'"' -f4)
+            local role
+    role=$(echo "$line" | grep -o '"role": "[^"]*"' | cut -d'"' -f4)
+            local ticket
+    ticket=$(echo "$line" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
+            local started
+    started=$(echo "$line" | grep -o '"started_at": "[^"]*"' | cut -d'"' -f4)
 
             [[ -z "$pane" ]] && continue
 
-            local uptime=$(duration_since "$started")
+            local uptime
+    uptime=$(duration_since "$started")
 
             # Get ticket state if available
             local state=""
@@ -67,11 +73,12 @@ cmd_status() {
 
     # Show ticket summary
     echo "${BOLD}TICKETS:${NC}"
-    for state in ready claimed implement review qa done; do
+    for state in ready claimed implement review qa "done"; do
         local count=0
         for ticket_file in "$TICKETS_DIR"/*.md; do
             [[ -f "$ticket_file" ]] || continue
-            local s=$(get_frontmatter_value "$ticket_file" "state")
+            local s
+    s=$(get_frontmatter_value "$ticket_file" "state")
             [[ "$s" == "$state" ]] && count=$((count + 1))
         done
         printf "  %-12s %d\n" "$state:" "$count"
@@ -81,7 +88,8 @@ cmd_status() {
     if [[ "$verbose" == "true" ]]; then
         echo "${BOLD}READY TICKETS:${NC}"
         ticket_ready | while read -r id; do
-            local title=$(grep -m1 '^# ' "$TICKETS_DIR/${id}.md" | sed 's/^# //')
+            local title
+    title=$(grep -m1 '^# ' "$TICKETS_DIR/${id}.md" | sed 's/^# //')
             echo "  $id: $title"
         done
         echo ""
@@ -109,11 +117,14 @@ cmd_fetch() {
 
     # Find pane by title or index
     local target_pane=""
-    local panes=$(tmux list-panes -t "$RALPHS_SESSION:main" -F '#{pane_index} #{pane_title}' 2>/dev/null)
+    local panes
+    panes=$(tmux list-panes -t "$RALPHS_SESSION:main" -F '#{pane_index} #{pane_title}' 2>/dev/null)
 
     while IFS= read -r line; do
-        local idx=$(echo "$line" | awk '{print $1}')
-        local title=$(echo "$line" | awk '{print $2}')
+        local idx
+    idx=$(echo "$line" | awk '{print $1}')
+        local title
+    title=$(echo "$line" | awk '{print $2}')
         if [[ "$title" == "$pane_id" ]] || [[ "$idx" == "$pane_id" ]]; then
             target_pane="$idx"
             break
@@ -126,7 +137,8 @@ cmd_fetch() {
     fi
 
     # Capture pane output
-    local pane_output=$(tmux capture-pane -t "$RALPHS_SESSION:main.$target_pane" -p -S -100 2>/dev/null)
+    local pane_output
+    pane_output=$(tmux capture-pane -t "$RALPHS_SESSION:main.$target_pane" -p -S -100 2>/dev/null)
 
     # Get ticket info if available
     local registry="$PROJECT_ROOT/$PANE_REGISTRY_FILE"
@@ -134,7 +146,8 @@ cmd_fetch() {
     local ticket_content=""
 
     if [[ -f "$registry" ]]; then
-        local entry=$(grep "\"pane\": \"$pane_id\"" "$registry" || true)
+        local entry
+    entry=$(grep "\"pane\": \"$pane_id\"" "$registry" || true)
         if [[ -n "$entry" ]]; then
             ticket_id=$(echo "$entry" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
         fi
@@ -179,12 +192,15 @@ Provide a concise summary (2-3 sentences max). Focus on:
         echo "$context" | "$RALPHS_AGENT_CMD" --print 2>/dev/null || echo "$context"
     else
         # Fallback: just show recent activity indicator
-        local lines=$(echo "$pane_output" | wc -l)
-        local last_line=$(echo "$pane_output" | tail -1)
+        local lines
+    lines=$(echo "$pane_output" | wc -l)
+        local last_line
+    last_line=$(echo "$pane_output" | tail -1)
         echo "Pane $pane_id: $lines lines of output"
         echo "Last activity: $last_line"
         if [[ -n "$ticket_id" ]]; then
-            local state=$(get_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "state")
+            local state
+    state=$(get_frontmatter_value "$TICKETS_DIR/${ticket_id}.md" "state")
             echo "Ticket $ticket_id in state: $state"
         fi
     fi
@@ -214,15 +230,19 @@ cmd_digest() {
 
 "
         while IFS= read -r line; do
-            local pane=$(echo "$line" | grep -o '"pane": "[^"]*"' | cut -d'"' -f4)
-            local role=$(echo "$line" | grep -o '"role": "[^"]*"' | cut -d'"' -f4)
-            local ticket=$(echo "$line" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
+            local pane
+    pane=$(echo "$line" | grep -o '"pane": "[^"]*"' | cut -d'"' -f4)
+            local role
+    role=$(echo "$line" | grep -o '"role": "[^"]*"' | cut -d'"' -f4)
+            local ticket
+    ticket=$(echo "$line" | grep -o '"ticket": "[^"]*"' | cut -d'"' -f4)
 
             [[ -z "$pane" ]] && continue
 
             context="$context- $pane ($role)"
             if [[ -n "$ticket" ]]; then
-                local title=$(grep -m1 '^# ' "$TICKETS_DIR/${ticket}.md" 2>/dev/null | sed 's/^# //')
+                local title
+    title=$(grep -m1 '^# ' "$TICKETS_DIR/${ticket}.md" 2>/dev/null | sed 's/^# //')
                 context="$context: $ticket - $title"
             fi
             context="$context
@@ -235,11 +255,12 @@ cmd_digest() {
 ## Ticket States
 
 "
-    for state in ready claimed implement review qa done; do
+    for state in ready claimed implement review qa "done"; do
         local count=0
         for ticket_file in "$TICKETS_DIR"/*.md; do
             [[ -f "$ticket_file" ]] || continue
-            local s=$(get_frontmatter_value "$ticket_file" "state")
+            local s
+    s=$(get_frontmatter_value "$ticket_file" "state")
             [[ "$s" == "$state" ]] && count=$((count + 1))
         done
         context="$context- $state: $count
@@ -301,11 +322,14 @@ cmd_logs() {
 
     # Find pane
     local target_pane=""
-    local panes=$(tmux list-panes -t "$RALPHS_SESSION:main" -F '#{pane_index} #{pane_title}' 2>/dev/null)
+    local panes
+    panes=$(tmux list-panes -t "$RALPHS_SESSION:main" -F '#{pane_index} #{pane_title}' 2>/dev/null)
 
     while IFS= read -r line; do
-        local idx=$(echo "$line" | awk '{print $1}')
-        local title=$(echo "$line" | awk '{print $2}')
+        local idx
+    idx=$(echo "$line" | awk '{print $1}')
+        local title
+    title=$(echo "$line" | awk '{print $2}')
         if [[ "$title" == "$pane_id" ]] || [[ "$idx" == "$pane_id" ]]; then
             target_pane="$idx"
             break
@@ -338,7 +362,8 @@ cmd_context() {
         exit $EXIT_INVALID_ARGS
     fi
 
-    local id=$(resolve_ticket_id "$1") || exit $EXIT_TICKET_NOT_FOUND
+    local id
+    id=$(resolve_ticket_id "$1") || exit $EXIT_TICKET_NOT_FOUND
     shift
     local prompt="${*:-Provide a full briefing for working on this ticket.}"
 
@@ -347,7 +372,8 @@ cmd_context() {
     local ticket_path="$TICKETS_DIR/${id}.md"
 
     # Build context
-    local context="# Ticket Briefing: $id
+    local context
+    context="# Ticket Briefing: $id
 
 ## Ticket Content
 
@@ -356,7 +382,8 @@ $(cat "$ticket_path")
 "
 
     # Add dependency info
-    local deps=$(awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}' "$ticket_path")
+    local deps
+    deps=$(awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}' "$ticket_path")
     if [[ -n "$deps" ]]; then
         context="$context## Dependencies
 
@@ -364,8 +391,10 @@ $(cat "$ticket_path")
         for dep in $deps; do
             [[ -z "$dep" ]] && continue
             if [[ -f "$TICKETS_DIR/${dep}.md" ]]; then
-                local dep_state=$(get_frontmatter_value "$TICKETS_DIR/${dep}.md" "state")
-                local dep_title=$(grep -m1 '^# ' "$TICKETS_DIR/${dep}.md" | sed 's/^# //')
+                local dep_state
+    dep_state=$(get_frontmatter_value "$TICKETS_DIR/${dep}.md" "state")
+                local dep_title
+    dep_title=$(grep -m1 '^# ' "$TICKETS_DIR/${dep}.md" | sed 's/^# //')
                 context="$context- $dep [$dep_state]: $dep_title
 "
             fi
@@ -376,7 +405,8 @@ $(cat "$ticket_path")
 
     # Look for related specs
     if [[ -d "$PROJECT_ROOT/specs" ]]; then
-        local title=$(grep -m1 '^# ' "$ticket_path" | sed 's/^# //' | tr '[:upper:]' '[:lower:]')
+        local title
+    title=$(grep -m1 '^# ' "$ticket_path" | sed 's/^# //' | tr '[:upper:]' '[:lower:]')
         local related_specs=""
 
         for spec_file in "$PROJECT_ROOT/specs"/*.md "$PROJECT_ROOT/specs"/**/*.md; do
@@ -428,7 +458,8 @@ cmd_ephemeral() {
     load_config
 
     # Read from stdin, apply prompt, output result
-    local input=$(cat)
+    local input
+    input=$(cat)
 
     if command -v "$RALPHS_AGENT_CMD" &>/dev/null; then
         echo -e "$prompt\n\n$input" | "$RALPHS_AGENT_CMD" --print 2>/dev/null
