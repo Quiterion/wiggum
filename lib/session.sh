@@ -47,21 +47,17 @@ cmd_init() {
     # Set PROJECT_ROOT and RALPHS_DIR for sync functions
     PROJECT_ROOT="$(pwd)"
     RALPHS_DIR="$PROJECT_ROOT/.ralphs"
-    TICKETS_DIR="$RALPHS_DIR/tickets"
+    # Main worktree uses bare repo directly; agent worktrees get clones
+    TICKETS_DIR="$RALPHS_DIR/tickets.git"
     export PROJECT_ROOT RALPHS_DIR TICKETS_DIR
 
     # Initialize bare tickets repository
     init_bare_tickets_repo
 
-    # Clone tickets to local .ralphs/tickets for main worktree
-    if [[ ! -d "$TICKETS_DIR/.git" ]]; then
-        clone_tickets_to_worktree "$RALPHS_DIR"
-    fi
-
     # Add to .gitignore
     local gitignore=".gitignore"
     [[ -f "$gitignore" ]] || touch "$gitignore"
-    local entries=(".ralphs/tickets.git/" ".ralphs/tickets/" "worktrees/")
+    local entries=(".ralphs/tickets.git/" "worktrees/")
     for entry in "${entries[@]}"; do
         if ! grep -qxF "$entry" "$gitignore" 2>/dev/null; then
             echo "$entry" >> "$gitignore"

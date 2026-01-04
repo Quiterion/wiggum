@@ -2,9 +2,104 @@
 #
 # ticket.sh - Ticket management system
 #
+# Supports both bare repo (main project) and clone (agent worktrees)
+#
 
 # Valid states and transitions
 VALID_STATES=("ready" "claimed" "implement" "review" "qa" "done")
+
+#
+# Ticket I/O abstraction layer
+# Works with both bare repo and clone
+#
+
+# Check if we're using a clone (vs bare repo)
+has_ticket_clone() {
+    [[ -d "$TICKETS_DIR/.git" ]]
+}
+
+# List all ticket IDs
+list_ticket_ids() {
+    if has_ticket_clone; then
+        for f in "$TICKETS_DIR"/*.md; do
+            [[ -f "$f" ]] && basename "$f" .md
+        done
+    else
+        bare_list_tickets | sed 's/\.md$//'
+    fi
+}
+
+# Read ticket content
+read_ticket() {
+    local id="$1"
+    if has_ticket_clone; then
+        cat "$TICKETS_DIR/${id}.md" 2>/dev/null
+    else
+        bare_read_ticket "${id}.md"
+    fi
+}
+
+# Write ticket content
+write_ticket() {
+    local id="$1"
+    local content="$2"
+    local commit_msg="${3:-Update ticket: $id}"
+
+    if has_ticket_clone; then
+        echo "$content" > "$TICKETS_DIR/${id}.md"
+        ticket_sync_push "$commit_msg" 2>/dev/null || true
+    else
+        bare_write_ticket "${id}.md" "$content" "$commit_msg"
+    fi
+}
+
+# Get frontmatter value from ticket (works with both modes)
+get_ticket_value() {
+    local id="$1"
+    local key="$2"
+    local content
+    content=$(read_ticket "$id")
+    echo "$content" | awk -F': ' "/^${key}:/{print \$2; exit}"
+}
+
+# Set frontmatter value in ticket (works with both modes)
+set_ticket_value() {
+    local id="$1"
+    local key="$2"
+    local value="$3"
+    local commit_msg="${4:-Update $key on $id}"
+
+    local content
+    content=$(read_ticket "$id")
+    local updated
+    updated=$(echo "$content" | awk -v key="$key" -v val="$value" '
+        $0 ~ "^"key":" { print key": "val; next }
+        { print }
+    ')
+    write_ticket "$id" "$updated" "$commit_msg"
+}
+
+# Check if ticket exists
+ticket_exists() {
+    local id="$1"
+    if has_ticket_clone; then
+        [[ -f "$TICKETS_DIR/${id}.md" ]]
+    else
+        bare_read_ticket "${id}.md" &>/dev/null
+    fi
+}
+
+# Get ticket title (first H1)
+get_ticket_title() {
+    local id="$1"
+    read_ticket "$id" | grep -m1 '^# ' | sed 's/^# //'
+}
+
+# Get ticket dependencies
+get_ticket_deps() {
+    local id="$1"
+    read_ticket "$id" | awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}'
+}
 
 # State transition rules: from -> allowed targets
 declare -A TRANSITIONS=(
@@ -70,7 +165,7 @@ cmd_ticket() {
 # Create a new ticket
 ticket_create() {
     if [[ $# -lt 1 ]]; then
-        error "Usage: ralphs ticket create <title> [--type TYPE] [--priority N] [--dep ID] [--no-sync]"
+        error "Usage: ralphs ticket create <title> [--type TYPE] [--priority N] [--dep ID]"
         exit $EXIT_INVALID_ARGS
     fi
 
@@ -80,7 +175,6 @@ ticket_create() {
     local type="task"
     local priority=2
     local deps=()
-    local no_sync=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -96,10 +190,6 @@ ticket_create() {
                 deps+=("$2")
                 shift 2
                 ;;
-            --no-sync)
-                no_sync=true
-                shift
-                ;;
             *)
                 shift
                 ;;
@@ -108,13 +198,12 @@ ticket_create() {
 
     require_project
 
-    # Sync before write operation
-    [[ "$no_sync" != "true" ]] && ticket_sync_pull 2>/dev/null || true
+    # Sync before write operation (only for clones)
+    has_ticket_clone && ticket_sync_pull 2>/dev/null || true
 
     # Generate ticket ID
     local id
     id=$(generate_id "tk")
-    local ticket_path="$TICKETS_DIR/${id}.md"
 
     # Build dependencies YAML
     local deps_yaml=""
@@ -130,9 +219,9 @@ ticket_create() {
     # Determine initial state (ready if no deps, otherwise blocked implicitly)
     local state="ready"
 
-    # Create ticket file
-    cat > "$ticket_path" <<EOF
----
+    # Build ticket content
+    local content
+    content="---
 id: $id
 type: $type
 priority: $priority
@@ -158,11 +247,10 @@ created_by: manual
 ## Feedback
 
 ## Notes
+"
 
-EOF
-
-    # Sync after write operation
-    [[ "$no_sync" != "true" ]] && ticket_sync_push "Create ticket: $id" 2>/dev/null || true
+    # Write ticket using abstraction
+    write_ticket "$id" "$content" "Create ticket: $id"
 
     # Show success message only when interactive (TTY)
     if [[ -t 1 ]]; then

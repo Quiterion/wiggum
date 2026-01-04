@@ -16,6 +16,71 @@ is_ticket_origin() {
     [[ ! -d "$TICKETS_DIR/.git" ]] && [[ -d "$TICKETS_DIR/objects" ]]
 }
 
+# Get the bare repo path (works from main project or worktree)
+get_bare_repo() {
+    if is_ticket_origin; then
+        echo "$TICKETS_DIR"
+    else
+        echo "$RALPHS_DIR/tickets.git"
+    fi
+}
+
+# List ticket files from bare repo
+bare_list_tickets() {
+    local bare_repo
+    bare_repo=$(get_bare_repo)
+    git -C "$bare_repo" ls-tree --name-only HEAD 2>/dev/null | grep '\.md$' | grep -v '^\.gitkeep'
+}
+
+# Read ticket content from bare repo
+bare_read_ticket() {
+    local ticket_file="$1"
+    local bare_repo
+    bare_repo=$(get_bare_repo)
+    git -C "$bare_repo" show "HEAD:$ticket_file" 2>/dev/null
+}
+
+# Write ticket to bare repo via temp clone
+bare_write_ticket() {
+    local ticket_file="$1"
+    local content="$2"
+    local commit_msg="${3:-Update ticket}"
+    local bare_repo
+    bare_repo=$(get_bare_repo)
+
+    local tmp
+    tmp=$(mktemp -d)
+    git clone "$bare_repo" "$tmp" --quiet 2>/dev/null
+    git -C "$tmp" config user.email "ralphs@local"
+    git -C "$tmp" config user.name "ralphs"
+
+    echo "$content" > "$tmp/$ticket_file"
+    git -C "$tmp" add "$ticket_file"
+    git -c commit.gpgsign=false -C "$tmp" commit -m "$commit_msg" --quiet 2>/dev/null || true
+    git -C "$tmp" push origin main --quiet 2>/dev/null || true
+    rm -rf "$tmp"
+}
+
+# Delete ticket from bare repo via temp clone
+bare_delete_ticket() {
+    local ticket_file="$1"
+    local commit_msg="${2:-Delete ticket}"
+    local bare_repo
+    bare_repo=$(get_bare_repo)
+
+    local tmp
+    tmp=$(mktemp -d)
+    git clone "$bare_repo" "$tmp" --quiet 2>/dev/null
+    git -C "$tmp" config user.email "ralphs@local"
+    git -C "$tmp" config user.name "ralphs"
+
+    rm -f "$tmp/$ticket_file"
+    git -C "$tmp" add -A
+    git -c commit.gpgsign=false -C "$tmp" commit -m "$commit_msg" --quiet 2>/dev/null || true
+    git -C "$tmp" push origin main --quiet 2>/dev/null || true
+    rm -rf "$tmp"
+}
+
 # Initialize the bare tickets repository
 init_bare_tickets_repo() {
     local tickets_git="$RALPHS_DIR/tickets.git"
