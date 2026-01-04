@@ -26,12 +26,13 @@ export EXIT_INVALID_TRANSITION=6
 
 # Source library functions
 source "$RALPHS_LIB/config.sh"
+source "$RALPHS_LIB/utils.sh"
+source "$RALPHS_LIB/sync.sh"
 source "$RALPHS_LIB/session.sh"
 source "$RALPHS_LIB/pane.sh"
 source "$RALPHS_LIB/ticket.sh"
 source "$RALPHS_LIB/tools.sh"
 source "$RALPHS_LIB/hooks.sh"
-source "$RALPHS_LIB/utils.sh"
 
 # Global flags (set by parse_global_flags, used by utils.sh)
 export RALPHS_QUIET=false
@@ -44,7 +45,7 @@ ralphs - Multi-Agent Orchestration Harness v$RALPHS_VERSION
 Usage: ralphs <command> [options]
 
 Session Management:
-  init [--session NAME]         Initialize a new ralphs session
+  init [--session NAME] [--distributed]  Initialize a new ralphs session
   attach [--session NAME]       Attach to existing session
   teardown [--force]            Tear down session and cleanup
 
@@ -71,6 +72,7 @@ Ticket Management:
   ticket transition <id> <st>   Transition ticket state
   ticket edit <id>              Edit ticket in \$EDITOR
   ticket feedback <id> <src> <msg>  Add feedback
+  ticket sync [--pull|--push]   Sync tickets with origin
 
 Global Options:
   --session NAME                Specify tmux session
@@ -81,6 +83,7 @@ Global Options:
 
 Examples:
   ralphs init
+  ralphs init --distributed     # Enable distributed ticket sync
   ralphs ticket create "Add auth" --type feature
   ralphs spawn supervisor
   ralphs spawn impl tk-5c46

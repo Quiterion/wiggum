@@ -13,6 +13,7 @@ session_exists() {
 cmd_init() {
     local session_name=""
     local no_session=false
+    local distributed=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -23,6 +24,10 @@ cmd_init() {
                 ;;
             --no-session)
                 no_session=true
+                shift
+                ;;
+            --distributed)
+                distributed=true
                 shift
                 ;;
             *)
@@ -43,6 +48,29 @@ cmd_init() {
         mkdir -p "$ralphs_dir/hooks"
         mkdir -p "$ralphs_dir/prompts"
         mkdir -p "$ralphs_dir/tools"
+    fi
+
+    # Initialize distributed tickets if requested
+    if [[ "$distributed" == "true" ]]; then
+        # Set PROJECT_ROOT and RALPHS_DIR for sync functions
+        PROJECT_ROOT="$(pwd)"
+        RALPHS_DIR="$PROJECT_ROOT/.ralphs"
+        TICKETS_DIR="$RALPHS_DIR/tickets"
+        export PROJECT_ROOT RALPHS_DIR TICKETS_DIR
+
+        init_bare_tickets_repo
+
+        # Add to .gitignore
+        local gitignore=".gitignore"
+        # Create .gitignore if it doesn't exist
+        [[ -f "$gitignore" ]] || touch "$gitignore"
+        local entries=(".ralphs/tickets.git/" "worktrees/")
+        for entry in "${entries[@]}"; do
+            if ! grep -qxF "$entry" "$gitignore" 2>/dev/null; then
+                echo "$entry" >> "$gitignore"
+            fi
+        done
+        info "Updated .gitignore for distributed mode"
     fi
 
     # Write config if not exists

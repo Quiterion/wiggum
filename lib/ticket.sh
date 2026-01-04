@@ -57,6 +57,9 @@ cmd_ticket() {
         feedback)
             ticket_feedback "$@"
             ;;
+        sync)
+            cmd_ticket_sync "$@"
+            ;;
         *)
             error "Unknown subcommand: $subcmd"
             exit $EXIT_INVALID_ARGS
@@ -67,7 +70,7 @@ cmd_ticket() {
 # Create a new ticket
 ticket_create() {
     if [[ $# -lt 1 ]]; then
-        error "Usage: ralphs ticket create <title> [--type TYPE] [--priority N] [--dep ID]"
+        error "Usage: ralphs ticket create <title> [--type TYPE] [--priority N] [--dep ID] [--no-sync]"
         exit $EXIT_INVALID_ARGS
     fi
 
@@ -77,6 +80,7 @@ ticket_create() {
     local type="task"
     local priority=2
     local deps=()
+    local no_sync=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -92,6 +96,10 @@ ticket_create() {
                 deps+=("$2")
                 shift 2
                 ;;
+            --no-sync)
+                no_sync=true
+                shift
+                ;;
             *)
                 shift
                 ;;
@@ -99,6 +107,9 @@ ticket_create() {
     done
 
     require_project
+
+    # Sync before write operation
+    [[ "$no_sync" != "true" ]] && ticket_sync_pull 2>/dev/null || true
 
     # Generate ticket ID
     local id
@@ -150,6 +161,9 @@ created_by: manual
 
 EOF
 
+    # Sync after write operation
+    [[ "$no_sync" != "true" ]] && ticket_sync_push "Create ticket: $id" 2>/dev/null || true
+
     # Show success message only when interactive (TTY)
     if [[ -t 1 ]]; then
         success "Created ticket: $id"
@@ -179,6 +193,9 @@ ticket_list() {
     done
 
     require_project
+
+    # Sync before read operation
+    ticket_sync_pull 2>/dev/null || true
 
     echo ""
     printf "${BOLD}%-10s %-10s %-10s %-3s %-40s${NC}\n" "ID" "STATE" "TYPE" "PRI" "TITLE"
@@ -224,6 +241,9 @@ ticket_show() {
     id=$(resolve_ticket_id "$1") || exit $EXIT_TICKET_NOT_FOUND
     require_project
 
+    # Sync before read operation
+    ticket_sync_pull 2>/dev/null || true
+
     local ticket_path="$TICKETS_DIR/${id}.md"
     if [[ ! -f "$ticket_path" ]]; then
         error "Ticket not found: $id"
@@ -250,6 +270,9 @@ ticket_ready() {
     done
 
     require_project
+
+    # Sync before read operation
+    ticket_sync_pull 2>/dev/null || true
 
     local count=0
     for ticket_file in "$TICKETS_DIR"/*.md; do
@@ -291,6 +314,9 @@ ticket_ready() {
 # List blocked tickets
 ticket_blocked() {
     require_project
+
+    # Sync before read operation
+    ticket_sync_pull 2>/dev/null || true
 
     for ticket_file in "$TICKETS_DIR"/*.md; do
         [[ -f "$ticket_file" ]] || continue
@@ -334,6 +360,9 @@ ticket_tree() {
     local id
     id=$(resolve_ticket_id "$1") || exit $EXIT_TICKET_NOT_FOUND
     require_project
+
+    # Sync before read operation
+    ticket_sync_pull 2>/dev/null || true
 
     _print_tree "$id" 0
 }
@@ -384,6 +413,9 @@ ticket_claim() {
     id=$(resolve_ticket_id "$1") || exit $EXIT_TICKET_NOT_FOUND
     require_project
 
+    # Sync before write operation
+    ticket_sync_pull 2>/dev/null || true
+
     local ticket_path="$TICKETS_DIR/${id}.md"
     local current_state
     current_state=$(get_frontmatter_value "$ticket_path" "state")
@@ -396,6 +428,9 @@ ticket_claim() {
     set_frontmatter_value "$ticket_path" "state" "claimed"
     set_frontmatter_value "$ticket_path" "assigned_at" "$(timestamp)"
 
+    # Sync after write operation
+    ticket_sync_push "Claim ticket: $id" 2>/dev/null || true
+
     run_hook "on-claim" "$id"
 
     success "Claimed $id"
@@ -404,7 +439,7 @@ ticket_claim() {
 # Transition ticket state
 ticket_transition() {
     if [[ $# -lt 2 ]]; then
-        error "Usage: ralphs ticket transition <id> <state> [--no-hooks]"
+        error "Usage: ralphs ticket transition <id> <state> [--no-hooks] [--no-sync]"
         exit $EXIT_INVALID_ARGS
     fi
 
@@ -414,10 +449,15 @@ ticket_transition() {
     shift 2
 
     local skip_hooks=false
+    local no_sync=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --no-hooks)
                 skip_hooks=true
+                shift
+                ;;
+            --no-sync)
+                no_sync=true
                 shift
                 ;;
             *)
@@ -427,6 +467,9 @@ ticket_transition() {
     done
 
     require_project
+
+    # Sync before write operation
+    [[ "$no_sync" != "true" ]] && ticket_sync_pull 2>/dev/null || true
 
     local ticket_path="$TICKETS_DIR/${id}.md"
     local current_state
@@ -494,6 +537,9 @@ ticket_transition() {
         run_hook "on-close" "$id"
     fi
 
+    # Sync after write operation
+    [[ "$no_sync" != "true" ]] && ticket_sync_push "Transition $id: $current_state → $new_state" 2>/dev/null || true
+
     success "Transitioned $id: $current_state -> $new_state"
 }
 
@@ -528,6 +574,9 @@ ticket_feedback() {
 
     require_project
 
+    # Sync before write operation
+    ticket_sync_pull 2>/dev/null || true
+
     local ticket_path="$TICKETS_DIR/${id}.md"
 
     # Append feedback to ticket
@@ -550,6 +599,9 @@ $message
         { print }
     ' "$ticket_path" > "$temp"
     mv "$temp" "$ticket_path"
+
+    # Sync after write operation
+    ticket_sync_push "Feedback on $id from $source" 2>/dev/null || true
 
     # Ping assigned pane if any
     local pane

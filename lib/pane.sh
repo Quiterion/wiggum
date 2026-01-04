@@ -87,6 +87,7 @@ cmd_spawn() {
     shift
 
     local ticket_id="${1:-}"
+    [[ "$ticket_id" == --* ]] && ticket_id=""  # Handle flags
 
     require_project
     load_config
@@ -116,6 +117,29 @@ cmd_spawn() {
     # Build the agent command
     local agent_cmd="$RALPHS_AGENT_CMD"
 
+    # In distributed mode, create a worktree for the agent
+    local worktree_path=""
+    if is_distributed; then
+        worktree_path="$PROJECT_ROOT/worktrees/$pane_name"
+        if [[ ! -d "$worktree_path" ]]; then
+            info "Creating worktree for $pane_name..."
+            mkdir -p "$PROJECT_ROOT/worktrees"
+            git worktree add "$worktree_path" -b "$pane_name" --quiet 2>/dev/null || \
+                git worktree add "$worktree_path" "$pane_name" --quiet 2>/dev/null || true
+
+            # Create .ralphs directory structure in worktree
+            mkdir -p "$worktree_path/.ralphs/hooks"
+            mkdir -p "$worktree_path/.ralphs/prompts"
+
+            # Clone tickets repo into worktree
+            clone_tickets_to_worktree "$worktree_path/.ralphs"
+
+            # Copy hooks and prompts
+            [[ -d "$RALPHS_DIR/hooks" ]] && cp -r "$RALPHS_DIR/hooks/"* "$worktree_path/.ralphs/hooks/" 2>/dev/null || true
+            [[ -d "$RALPHS_DIR/prompts" ]] && cp -r "$RALPHS_DIR/prompts/"* "$worktree_path/.ralphs/prompts/" 2>/dev/null || true
+        fi
+    fi
+
     # Create new pane
     info "Spawning $pane_name${ticket_id:+ for $ticket_id}..."
 
@@ -126,6 +150,11 @@ cmd_spawn() {
 
     # Set pane title
     tmux select-pane -t "$RALPHS_SESSION:main.$new_pane" -T "$pane_name"
+
+    # Change to worktree directory if in distributed mode
+    if [[ -n "$worktree_path" ]]; then
+        tmux send-keys -t "$RALPHS_SESSION:main.$new_pane" "cd '$worktree_path'" Enter
+    fi
 
     # Run the agent command
     tmux send-keys -t "$RALPHS_SESSION:main.$new_pane" "# ralphs: $pane_name${ticket_id:+ ($ticket_id)}" Enter
