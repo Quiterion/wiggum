@@ -75,6 +75,33 @@ cmd_init() {
         fi
     done
 
+    # Create Claude Code settings for worktree agents
+    local claude_dir=".claude"
+    if [[ ! -d "$claude_dir" ]]; then
+        mkdir -p "$claude_dir"
+    fi
+    if [[ ! -f "$claude_dir/settings.local.json" ]]; then
+        cat > "$claude_dir/settings.local.json" <<'CLAUDE_SETTINGS'
+{
+  "permissions": {
+    "allow": [
+      "Bash(wiggum *:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ]
+  }
+}
+CLAUDE_SETTINGS
+        success "Created Claude Code settings"
+        # Add to gitignore
+        if ! grep -qxF ".claude/settings.local.json" "$gitignore" 2>/dev/null; then
+            echo ".claude/settings.local.json" >> "$gitignore"
+        fi
+    fi
+
     # Write config if not exists
     if [[ ! -f "$wiggum_dir/config.sh" ]]; then
         write_default_config "$wiggum_dir/config.sh"

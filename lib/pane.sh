@@ -287,6 +287,11 @@ cmd_spawn() {
 
         # Clone tickets repo into worktree (optional - may not have bare repo)
         clone_tickets_to_worktree "$worktree_path/.wiggum" || true
+
+        # Symlink Claude Code settings from main project
+        if [[ -d "$MAIN_PROJECT_ROOT/.claude" ]] && [[ ! -e "$worktree_path/.claude" ]]; then
+            ln -s "$MAIN_PROJECT_ROOT/.claude" "$worktree_path/.claude"
+        fi
     fi
 
     # Create new pane
