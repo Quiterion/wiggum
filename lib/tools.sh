@@ -44,10 +44,9 @@ cmd_status() {
             agent_count=$(jq 'length' "$registry" 2>/dev/null || echo 0)
         fi
 
-        for ticket_file in "$MAIN_TICKETS_DIR"/*.md; do
-            [[ -f "$ticket_file" ]] || continue
+        for ticket_file in $(bare_list_tickets); do
             local s
-            s=$(get_frontmatter_value "$ticket_file" "state" 2>/dev/null)
+            s=$(bare_get_frontmatter_value "$ticket_file" "state" 2>/dev/null)
             [[ "$s" == "ready" ]] && ready_count=$((ready_count + 1))
         done
 
@@ -85,10 +84,10 @@ cmd_status() {
                 # Get ticket from tickets (single source of truth)
                 ticket=$(get_agent_ticket "$agent_id")
 
-                # Get ticket state if available
+                # Get ticket state if available (from bare repo)
                 state=""
-                if [[ -n "$ticket" ]] && [[ -f "$MAIN_TICKETS_DIR/${ticket}.md" ]]; then
-                    state=$(get_frontmatter_value "$MAIN_TICKETS_DIR/${ticket}.md" "state")
+                if [[ -n "$ticket" ]]; then
+                    state=$(bare_get_frontmatter_value "${ticket}.md" "state" 2>/dev/null)
                 fi
 
                 printf "  %-12s %-12s %-12s %-10s\n" "$agent_id" "${ticket:-—}" "${state:-—}" "$uptime"
@@ -103,14 +102,13 @@ cmd_status() {
     fi
     echo ""
 
-    # Show ticket summary
+    # Show ticket summary (from bare repo)
     echo -e "${BOLD}TICKETS:${NC}"
     for state in ready in-progress review qa "done"; do
         local count=0
-        for ticket_file in "$MAIN_TICKETS_DIR"/*.md; do
-            [[ -f "$ticket_file" ]] || continue
+        for ticket_file in $(bare_list_tickets); do
             local s
-    s=$(get_frontmatter_value "$ticket_file" "state")
+            s=$(bare_get_frontmatter_value "$ticket_file" "state")
             [[ "$s" == "$state" ]] && count=$((count + 1))
         done
         printf "  %-12s %d\n" "$state:" "$count"
@@ -121,7 +119,7 @@ cmd_status() {
         echo -e "${BOLD}READY TICKETS:${NC}"
         ticket_ready | while read -r id; do
             local title
-    title=$(grep -m1 '^# ' "$MAIN_TICKETS_DIR/${id}.md" | sed 's/^# //')
+            title=$(bare_read_ticket "${id}.md" | grep -m1 '^# ' | sed 's/^# //')
             echo "  $id: $title"
         done
         echo ""
@@ -166,8 +164,8 @@ cmd_fetch() {
 
     ticket_id=$(get_agent_ticket "$agent_id")
 
-    if [[ -n "$ticket_id" ]] && [[ -f "$MAIN_TICKETS_DIR/${ticket_id}.md" ]]; then
-        ticket_content=$(<"$MAIN_TICKETS_DIR/${ticket_id}.md")
+    if [[ -n "$ticket_id" ]]; then
+        ticket_content=$(bare_read_ticket "${ticket_id}.md" 2>/dev/null)
     fi
 
     # Build context for ephemeral agent
@@ -213,7 +211,7 @@ Provide a concise summary (2-3 sentences max). Focus on:
         echo "Last activity: $last_line"
         if [[ -n "$ticket_id" ]]; then
             local state
-    state=$(get_frontmatter_value "$MAIN_TICKETS_DIR/${ticket_id}.md" "state")
+            state=$(bare_get_frontmatter_value "${ticket_id}.md" "state" 2>/dev/null)
             echo "Ticket $ticket_id in state: $state"
         fi
     fi
@@ -253,7 +251,7 @@ cmd_digest() {
 
                 context="$context- $agent_id ($role)"
                 if [[ -n "$ticket" ]]; then
-                    title=$(grep -m1 '^# ' "$MAIN_TICKETS_DIR/${ticket}.md" 2>/dev/null | sed 's/^# //')
+                    title=$(bare_read_ticket "${ticket}.md" 2>/dev/null | grep -m1 '^# ' | sed 's/^# //')
                     context="$context: $ticket - $title"
                 fi
                 context="$context
@@ -269,10 +267,9 @@ cmd_digest() {
 "
     for state in ready claimed implement review qa "done"; do
         local count=0
-        for ticket_file in "$MAIN_TICKETS_DIR"/*.md; do
-            [[ -f "$ticket_file" ]] || continue
+        for ticket_file in $(bare_list_tickets); do
             local s
-    s=$(get_frontmatter_value "$ticket_file" "state")
+            s=$(bare_get_frontmatter_value "$ticket_file" "state")
             [[ "$s" == "$state" ]] && count=$((count + 1))
         done
         context="$context- $state: $count
@@ -369,7 +366,9 @@ cmd_context() {
 
     require_project
 
-    local ticket_path="$MAIN_TICKETS_DIR/${id}.md"
+    # Read ticket from bare repo (source of truth)
+    local ticket_content
+    ticket_content=$(bare_read_ticket "${id}.md")
 
     # Build context
     local context
@@ -377,24 +376,26 @@ cmd_context() {
 
 ## Ticket Content
 
-$(<"$ticket_path")
+$ticket_content
 
 "
 
     # Add dependency info
     local deps
-    deps=$(awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}' "$ticket_path")
+    deps=$(echo "$ticket_content" | awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}')
     if [[ -n "$deps" ]]; then
         context="$context## Dependencies
 
 "
         for dep in $deps; do
             [[ -z "$dep" ]] && continue
-            if [[ -f "$MAIN_TICKETS_DIR/${dep}.md" ]]; then
+            local dep_content
+            dep_content=$(bare_read_ticket "${dep}.md" 2>/dev/null)
+            if [[ -n "$dep_content" ]]; then
                 local dep_state
-    dep_state=$(get_frontmatter_value "$MAIN_TICKETS_DIR/${dep}.md" "state")
+                dep_state=$(echo "$dep_content" | awk '/^state:/{print $2; exit}')
                 local dep_title
-    dep_title=$(grep -m1 '^# ' "$MAIN_TICKETS_DIR/${dep}.md" | sed 's/^# //')
+                dep_title=$(echo "$dep_content" | grep -m1 '^# ' | sed 's/^# //')
                 context="$context- $dep [$dep_state]: $dep_title
 "
             fi

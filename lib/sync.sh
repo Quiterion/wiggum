@@ -40,6 +40,16 @@ bare_read_ticket() {
     git -C "$bare_repo" show "HEAD:$ticket_file" 2>/dev/null
 }
 
+# Get frontmatter value from ticket in bare repo
+bare_get_frontmatter_value() {
+    local ticket_file="$1"
+    local key="$2"
+    bare_read_ticket "$ticket_file" | awk -v key="$key" '
+        /^---$/ { in_fm = !in_fm; next }
+        in_fm && $1 == key":" { print $2; exit }
+    '
+}
+
 # Write ticket to bare repo via temp clone
 bare_write_ticket() {
     local ticket_file="$1"
