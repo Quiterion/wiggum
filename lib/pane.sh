@@ -282,7 +282,7 @@ cmd_spawn() {
             # Read assigned_agent_id
             local impl_agent
             local ticket_content
-            ticket_content=$(read_ticket "${ticket_id}.md")
+            ticket_content=$(read_ticket "$ticket_id")
             impl_agent=$(echo "$ticket_content" | awk '/^assigned_agent_id:/{print $2; exit}')
             if [[ -n "$impl_agent" ]]; then
                 # Check if the implementer's branch exists
