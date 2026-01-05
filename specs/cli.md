@@ -13,7 +13,10 @@ wiggum
 ├── init / attach / teardown    # Session management
 ├── spawn / list / kill / ping  # Pane management
 ├── status / fetch / digest     # Observability
-└── ticket                      # Ticket subcommands
+├── ticket                      # Ticket subcommands
+├── branch                      # Branch management
+├── rebase                      # Conflict resolution
+└── hook                        # Hook management
 ```
 
 ---
@@ -370,6 +373,97 @@ Shows project hooks (`.wiggum/hooks/`) and default hooks, with active/inactive s
 
 ---
 
+## Branch Management
+
+wiggum uses a feature-branch-per-ticket model. See [architecture.md](./architecture.md#worktree-branching) for details.
+
+### wiggum branch list
+
+List branches, optionally filtered by ticket.
+
+```bash
+wiggum branch list [ticket-id]
+```
+
+**Output:**
+
+```
+BRANCH               TICKET          TYPE
+feature/tk-5c46      tk-5c46         feature
+worker-0             tk-5c46         worker
+reviewer-0           tk-5c46         reviewer
+main                 —               other
+```
+
+---
+
+### wiggum branch cleanup
+
+Remove all branches associated with a ticket.
+
+```bash
+wiggum branch cleanup <ticket-id>
+```
+
+**Effects:**
+- Deletes the feature branch `feature/tk-xxxx`
+- Deletes any agent branches (worker, reviewer, qa) associated with the ticket
+- Uses safe delete (`-d`), won't delete branches with unmerged changes
+
+---
+
+### wiggum branch merge
+
+Merge a ticket's feature branch to main.
+
+```bash
+wiggum branch merge <ticket-id>
+```
+
+**Effects:**
+- Checks out the main branch
+- Merges `feature/tk-xxxx` into main
+- Reports merge conflicts if any (exit code 7)
+
+**Example:**
+
+```bash
+# After ticket is done, merge to main
+wiggum branch merge tk-5c46
+
+# Then clean up the branches
+wiggum branch cleanup tk-5c46
+```
+
+---
+
+### wiggum rebase
+
+Rebase the current branch onto the ticket's feature branch. Useful for resolving conflicts.
+
+```bash
+wiggum rebase [ticket-id]
+```
+
+**Arguments:**
+- `ticket-id` — Optional. If not provided, auto-detects from current branch's ticket assignment.
+
+**Effects:**
+- Rebases current branch onto `feature/tk-xxxx`
+- Reports rebase conflicts if any with resolution instructions
+
+**Example:**
+
+```bash
+# From a worker branch, rebase onto feature branch
+wiggum rebase tk-5c46
+
+# Or auto-detect ticket from current branch
+wiggum rebase
+```
+
+---
+
 ## Global Flags
 
 These work with any command:
@@ -412,3 +506,4 @@ These can be set in `.wiggum/config.sh` or exported:
 | 4 | Pane not found |
 | 5 | Ticket not found |
 | 6 | Invalid state transition |
+| 7 | Merge conflict |

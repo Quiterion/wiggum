@@ -2,20 +2,28 @@
 #
 # on-review-done - Triggered when review passes
 #
-# Spawns a QA agent for the ticket.
+# Cleans up reviewer branch and spawns a QA agent for the ticket.
 #
 # Environment:
 #   WIGGUM_TICKET_ID    - The ticket ID
 #   WIGGUM_TICKET_PATH  - Full path to ticket file
 #   WIGGUM_PREV_STATE   - Previous state (review)
 #   WIGGUM_NEW_STATE    - New state (qa)
-#   WIGGUM_AGENT_ID     - Agent that triggered transition
+#   WIGGUM_AGENT_ID     - Agent that triggered transition (reviewer-X)
 #   WIGGUM_SESSION      - tmux session name
 #
 
 TICKET_ID="${1:-$WIGGUM_TICKET_ID}"
+AGENT_ID="${WIGGUM_AGENT_ID:-}"
 
 echo "[hook] Review passed for $TICKET_ID, spawning QA"
+
+# Clean up reviewer branch if agent ID is available
+if [[ -n "$AGENT_ID" ]] && [[ "$AGENT_ID" == reviewer-* ]]; then
+    echo "[hook] Cleaning up reviewer branch: $AGENT_ID"
+    # Delete the reviewer's branch (it's no longer needed after review passes)
+    git branch -d "$AGENT_ID" 2>/dev/null || true
+fi
 
 # Spawn a QA agent
 wiggum spawn qa "$TICKET_ID"

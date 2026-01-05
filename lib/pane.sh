@@ -299,10 +299,26 @@ cmd_spawn() {
         mkdir -p "$MAIN_PROJECT_ROOT/worktrees"
 
         # Determine the starting branch for the worktree
-        # For reviewer/QA roles, branch from the implementer's branch to see their changes
+        # Feature-branch-per-ticket model:
+        #   - Workers create/use feature/tk-xxxx and branch from it
+        #   - Reviewers/QA branch from the worker's branch to see changes
         local start_point=""
-        if [[ "$role" != "worker" ]] && [[ "$role" != "supervisor" ]] && [[ -n "$ticket_id" ]]; then
-            # Read assigned_agent_id
+        local feature_branch=""
+
+        if [[ -n "$ticket_id" ]]; then
+            feature_branch="feature/$ticket_id"
+        fi
+
+        if [[ "$role" == "worker" ]] && [[ -n "$ticket_id" ]]; then
+            # Workers: create feature branch if it doesn't exist, then branch from it
+            if ! git rev-parse --verify "$feature_branch" &>/dev/null; then
+                info "Creating feature branch: $feature_branch"
+                git branch "$feature_branch" HEAD
+            fi
+            start_point="$feature_branch"
+            info "Branching from feature branch: $feature_branch"
+        elif [[ "$role" != "supervisor" ]] && [[ -n "$ticket_id" ]]; then
+            # Reviewers/QA: branch from the implementer's branch to see their changes
             local impl_agent
             local ticket_content
             ticket_content=$(read_ticket "$ticket_id")
@@ -730,5 +746,268 @@ cmd_has_capacity() {
     else
         echo "false"
         return 1
+    fi
+}
+
+# Branch management subcommand router
+cmd_branch() {
+    if [[ $# -eq 0 ]]; then
+        error "Usage: wiggum branch <list|cleanup|merge> [args]"
+        exit "$EXIT_INVALID_ARGS"
+    fi
+
+    local subcmd="$1"
+    shift
+
+    case "$subcmd" in
+        list)
+            branch_list "$@"
+            ;;
+        cleanup)
+            branch_cleanup "$@"
+            ;;
+        merge)
+            branch_merge "$@"
+            ;;
+        *)
+            error "Unknown branch subcommand: $subcmd"
+            error "Valid subcommands: list, cleanup, merge"
+            exit "$EXIT_INVALID_ARGS"
+            ;;
+    esac
+}
+
+# List branches, optionally filtered by ticket
+# Usage: wiggum branch list [ticket-id]
+branch_list() {
+    local ticket_filter="${1:-}"
+
+    require_project
+
+    echo ""
+    printf "${BOLD}%-20s %-15s %-10s${NC}\n" "BRANCH" "TICKET" "TYPE"
+    echo "------------------------------------------------"
+
+    # Get all branches
+    local branches
+    branches=$(git branch --list --format='%(refname:short)' 2>/dev/null)
+
+    for branch in $branches; do
+        local ticket=""
+        local branch_type=""
+
+        # Parse branch name to extract ticket and type
+        if [[ "$branch" == feature/* ]]; then
+            # feature/tk-xxxx
+            ticket="${branch#feature/}"
+            branch_type="feature"
+        elif [[ "$branch" == worker-* ]] || [[ "$branch" == reviewer-* ]] || [[ "$branch" == qa-* ]]; then
+            # Agent branches (worker-0, reviewer-1, etc.)
+            # Look up ticket from agent assignment
+            local agent_ticket
+            agent_ticket=$(get_agent_ticket "$branch" 2>/dev/null || true)
+            if [[ -n "$agent_ticket" ]]; then
+                ticket="$agent_ticket"
+            fi
+            if [[ "$branch" == worker-* ]]; then
+                branch_type="worker"
+            elif [[ "$branch" == reviewer-* ]]; then
+                branch_type="reviewer"
+            elif [[ "$branch" == qa-* ]]; then
+                branch_type="qa"
+            fi
+        fi
+
+        # Apply filter if specified
+        if [[ -n "$ticket_filter" ]] && [[ "$ticket" != *"$ticket_filter"* ]]; then
+            continue
+        fi
+
+        printf "%-20s %-15s %-10s\n" "$branch" "${ticket:-—}" "${branch_type:-other}"
+    done
+
+    echo ""
+}
+
+# Clean up all branches for a ticket
+# Usage: wiggum branch cleanup <ticket-id>
+branch_cleanup() {
+    if [[ $# -lt 1 ]]; then
+        error "Usage: wiggum branch cleanup <ticket-id>"
+        exit "$EXIT_INVALID_ARGS"
+    fi
+
+    local ticket_id
+    ticket_id=$(resolve_ticket_id "$1") || exit "$EXIT_TICKET_NOT_FOUND"
+
+    require_project
+
+    local feature_branch="feature/$ticket_id"
+    local deleted=0
+
+    # Delete feature branch
+    if git rev-parse --verify "$feature_branch" &>/dev/null; then
+        info "Deleting feature branch: $feature_branch"
+        if git branch -d "$feature_branch" 2>/dev/null; then
+            deleted=$((deleted + 1))
+        else
+            warn "Could not delete $feature_branch (may have unmerged changes). Use -D to force."
+        fi
+    fi
+
+    # Find and delete agent branches associated with this ticket
+    # Look through pane registry to find agents assigned to this ticket
+    local registry="$MAIN_PROJECT_ROOT/$PANE_REGISTRY_FILE"
+    if [[ -f "$registry" ]] && command -v jq &>/dev/null; then
+        local agents
+        agents=$(jq -r 'keys[]' "$registry")
+        for agent_id in $agents; do
+            local agent_ticket
+            agent_ticket=$(get_agent_ticket "$agent_id" 2>/dev/null || true)
+            if [[ "$agent_ticket" == "$ticket_id" ]]; then
+                if git rev-parse --verify "$agent_id" &>/dev/null; then
+                    info "Deleting agent branch: $agent_id"
+                    if git branch -d "$agent_id" 2>/dev/null; then
+                        deleted=$((deleted + 1))
+                    else
+                        warn "Could not delete $agent_id (may have unmerged changes)."
+                    fi
+                fi
+            fi
+        done
+    fi
+
+    # Also check for orphaned agent branches matching common patterns
+    for prefix in worker- reviewer- qa-; do
+        local branches
+        branches=$(git branch --list "${prefix}*" --format='%(refname:short)' 2>/dev/null)
+        for branch in $branches; do
+            # Skip if already checked via registry
+            [[ -z "$branch" ]] && continue
+            # Check if this branch is related to our ticket by looking at merge base
+            if git merge-base --is-ancestor "$feature_branch" "$branch" 2>/dev/null; then
+                if git rev-parse --verify "$branch" &>/dev/null; then
+                    info "Deleting orphaned branch: $branch"
+                    git branch -d "$branch" 2>/dev/null && deleted=$((deleted + 1)) || true
+                fi
+            fi
+        done
+    done
+
+    success "Cleaned up $deleted branches for $ticket_id"
+}
+
+# Merge feature branch to main
+# Usage: wiggum branch merge <ticket-id>
+branch_merge() {
+    if [[ $# -lt 1 ]]; then
+        error "Usage: wiggum branch merge <ticket-id>"
+        exit "$EXIT_INVALID_ARGS"
+    fi
+
+    local ticket_id
+    ticket_id=$(resolve_ticket_id "$1") || exit "$EXIT_TICKET_NOT_FOUND"
+
+    require_project
+
+    local feature_branch="feature/$ticket_id"
+
+    # Check feature branch exists
+    if ! git rev-parse --verify "$feature_branch" &>/dev/null; then
+        error "Feature branch not found: $feature_branch"
+        exit "$EXIT_ERROR"
+    fi
+
+    # Get the main branch name
+    local main_branch
+    main_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+    [[ -z "$main_branch" ]] && main_branch="main"
+
+    # Save current branch
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+    info "Merging $feature_branch into $main_branch..."
+
+    # Checkout main and merge
+    if ! git checkout "$main_branch" --quiet 2>/dev/null; then
+        error "Failed to checkout $main_branch"
+        exit "$EXIT_ERROR"
+    fi
+
+    local merge_output
+    if merge_output=$(git merge "$feature_branch" --no-edit 2>&1); then
+        success "Successfully merged $feature_branch into $main_branch"
+        info "You may now delete the feature branch with: wiggum branch cleanup $ticket_id"
+        # Return to original branch if different
+        if [[ "$current_branch" != "$main_branch" ]] && [[ "$current_branch" != "$feature_branch" ]]; then
+            git checkout "$current_branch" --quiet 2>/dev/null || true
+        fi
+    else
+        error "Merge conflict detected!"
+        error "Output: $merge_output"
+        error ""
+        error "To resolve:"
+        error "  1. Resolve conflicts manually"
+        error "  2. git commit"
+        error "  3. Or: git merge --abort to cancel"
+        # Don't abort - let user resolve
+        exit "$EXIT_MERGE_CONFLICT"
+    fi
+}
+
+# Rebase helper for conflict resolution
+# Usage: wiggum rebase [ticket-id]
+cmd_rebase() {
+    local ticket_id="${1:-}"
+
+    require_project
+
+    # If no ticket specified, try to get it from current branch
+    if [[ -z "$ticket_id" ]]; then
+        local current_branch
+        current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+        # Try to find ticket from agent assignment
+        local agent_ticket
+        agent_ticket=$(get_agent_ticket "$current_branch" 2>/dev/null || true)
+        if [[ -n "$agent_ticket" ]]; then
+            ticket_id="$agent_ticket"
+        else
+            error "Usage: wiggum rebase <ticket-id>"
+            error "Or run from an agent branch to auto-detect ticket"
+            exit "$EXIT_INVALID_ARGS"
+        fi
+    else
+        ticket_id=$(resolve_ticket_id "$ticket_id") || exit "$EXIT_TICKET_NOT_FOUND"
+    fi
+
+    local feature_branch="feature/$ticket_id"
+
+    # Check feature branch exists
+    if ! git rev-parse --verify "$feature_branch" &>/dev/null; then
+        error "Feature branch not found: $feature_branch"
+        exit "$EXIT_ERROR"
+    fi
+
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+    info "Rebasing $current_branch onto $feature_branch..."
+
+    local rebase_output
+    if rebase_output=$(git rebase "$feature_branch" 2>&1); then
+        success "Successfully rebased onto $feature_branch"
+    else
+        error "Rebase conflict detected!"
+        error "Output: $rebase_output"
+        error ""
+        error "To resolve:"
+        error "  1. Fix conflicts in the listed files"
+        error "  2. git add <resolved-files>"
+        error "  3. git rebase --continue"
+        error ""
+        error "Or to abort: git rebase --abort"
+        exit "$EXIT_MERGE_CONFLICT"
     fi
 }

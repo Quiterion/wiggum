@@ -539,6 +539,65 @@ _print_tree() {
     done
 }
 
+# Merge worker branch to feature branch
+# Usage: merge_to_feature <ticket-id> <worker-branch>
+# Returns: 0 on success, EXIT_MERGE_CONFLICT on conflict
+merge_to_feature() {
+    local ticket_id="$1"
+    local worker_branch="$2"
+    local feature_branch="feature/$ticket_id"
+
+    # Check if feature branch exists
+    if ! git rev-parse --verify "$feature_branch" &>/dev/null; then
+        warn "Feature branch $feature_branch not found, creating from worker branch"
+        git branch "$feature_branch" "$worker_branch"
+        return 0
+    fi
+
+    # Check if worker branch has commits ahead of feature branch
+    local ahead
+    ahead=$(git rev-list --count "$feature_branch..$worker_branch" 2>/dev/null || echo "0")
+    if [[ "$ahead" == "0" ]]; then
+        info "Worker branch has no new commits to merge"
+        return 0
+    fi
+
+    info "Merging $worker_branch into $feature_branch ($ahead commits)..."
+
+    # Save current branch
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+    # Checkout feature branch and merge
+    if ! git checkout "$feature_branch" --quiet 2>/dev/null; then
+        error "Failed to checkout feature branch: $feature_branch"
+        return "$EXIT_ERROR"
+    fi
+
+    local merge_output
+    if merge_output=$(git merge "$worker_branch" --no-edit 2>&1); then
+        info "Successfully merged $worker_branch into $feature_branch"
+        # Return to original branch
+        git checkout "$current_branch" --quiet 2>/dev/null || true
+        return 0
+    else
+        error "Merge conflict detected!"
+        error "Output: $merge_output"
+        error ""
+        error "To resolve:"
+        error "  1. cd to main project root"
+        error "  2. git checkout $feature_branch"
+        error "  3. Resolve conflicts manually"
+        error "  4. git commit"
+        error "  5. Retry the transition"
+        # Abort the merge
+        git merge --abort 2>/dev/null || true
+        # Return to original branch
+        git checkout "$current_branch" --quiet 2>/dev/null || true
+        return "$EXIT_MERGE_CONFLICT"
+    fi
+}
+
 # Transition ticket state
 ticket_transition() {
     if [[ $# -lt 2 ]]; then
@@ -596,6 +655,19 @@ ticket_transition() {
         error "Cannot transition from '$current_state' to '$new_state'"
         error "Allowed transitions from '$current_state': $allowed"
         exit "$EXIT_INVALID_TRANSITION"
+    fi
+
+    # For in-progress -> review transitions, merge worker branch to feature branch
+    if [[ "$current_state" == "in-progress" ]] && [[ "$new_state" == "review" ]]; then
+        local assigned_agent
+        assigned_agent=$(get_frontmatter_value "$ticket_path" "assigned_agent_id")
+        if [[ -n "$assigned_agent" ]] && [[ "$assigned_agent" == worker-* ]]; then
+            info "Merging worker changes to feature branch before review..."
+            if ! merge_to_feature "$id" "$assigned_agent"; then
+                error "Cannot transition to review: merge conflicts must be resolved first"
+                exit "$EXIT_MERGE_CONFLICT"
+            fi
+        fi
     fi
 
     # Update state

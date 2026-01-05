@@ -2,29 +2,39 @@
 #
 # on-qa-done - Triggered when QA passes
 #
-# Ticket is complete. Optionally check for release tagging.
+# Cleans up QA branch. Ticket is complete. Optionally check for release tagging.
 #
 # Environment:
 #   WIGGUM_TICKET_ID    - The ticket ID
 #   WIGGUM_TICKET_PATH  - Full path to ticket file
 #   WIGGUM_PREV_STATE   - Previous state (qa)
 #   WIGGUM_NEW_STATE    - New state (done)
-#   WIGGUM_AGENT_ID     - Agent that triggered transition
+#   WIGGUM_AGENT_ID     - Agent that triggered transition (qa-X)
 #   WIGGUM_SESSION      - tmux session name
 #
 
 TICKET_ID="${1:-$WIGGUM_TICKET_ID}"
+AGENT_ID="${WIGGUM_AGENT_ID:-}"
 
 echo "[hook] QA passed for $TICKET_ID"
 
+# Clean up QA branch if agent ID is available
+if [[ -n "$AGENT_ID" ]] && [[ "$AGENT_ID" == qa-* ]]; then
+    echo "[hook] Cleaning up QA branch: $AGENT_ID"
+    # Delete the QA's branch (it's no longer needed after QA passes)
+    git branch -d "$AGENT_ID" 2>/dev/null || true
+fi
+
 # Check if all in-progress tickets are now done
 # If so, could auto-tag a release
-ACTIVE=$(wiggum ticket list --state implement 2>/dev/null | wc -l)
+ACTIVE=$(wiggum ticket list --state in-progress 2>/dev/null | wc -l)
 ACTIVE=$((ACTIVE + $(wiggum ticket list --state review 2>/dev/null | wc -l)))
 ACTIVE=$((ACTIVE + $(wiggum ticket list --state qa 2>/dev/null | wc -l)))
 
 if [[ "$ACTIVE" -le 1 ]]; then  # 1 because header line
     echo "[hook] All tickets complete!"
+    # Uncomment to auto-merge feature branch to main:
+    # wiggum branch merge "$TICKET_ID"
     # Uncomment to auto-tag:
     # LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
     # NEXT_TAG=$(echo "$LAST_TAG" | awk -F. '{print $1"."$2"."$3+1}')

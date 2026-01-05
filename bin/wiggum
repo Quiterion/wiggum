@@ -32,6 +32,7 @@ export EXIT_SESSION_NOT_FOUND=3
 export EXIT_PANE_NOT_FOUND=4
 export EXIT_TICKET_NOT_FOUND=5
 export EXIT_INVALID_TRANSITION=6
+export EXIT_MERGE_CONFLICT=7
 
 # Source library functions
 source "$WIGGUM_LIB/config.sh"
@@ -70,6 +71,12 @@ Observability:
   fetch <agent-id> [prompt]     Get summarized agent progress
   digest [prompt]               Summarize the whole hive
   logs <pane-id> [--tail N]     Raw agent trajectory
+
+Branch Management:
+  branch list [ticket-id]       List branches (optionally for a ticket)
+  branch cleanup <ticket-id>    Remove all branches for a ticket
+  branch merge <ticket-id>      Merge feature branch to main
+  rebase [ticket-id]            Rebase current branch on feature branch
 
 Ticket Management:
   ticket create <title> [opts]  Create a new ticket
@@ -202,6 +209,16 @@ main() {
     # Ticket subcommands
     ticket)
         cmd_ticket "$@"
+        ;;
+
+    # Branch management
+    branch)
+        cmd_branch "$@"
+        ;;
+
+    # Rebase helper
+    rebase)
+        cmd_rebase "$@"
         ;;
 
     # Hook subcommands

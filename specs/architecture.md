@@ -138,34 +138,91 @@ Workers don't know about other workers. They focus on their ticket.
 
 ## Worktree Branching
 
-Each agent gets its own git worktree. The **starting branch** depends on the role:
+Each agent gets its own git worktree. wiggum uses a **feature-branch-per-ticket** model for organized branch management.
 
-| Role | Branches From | Why |
-|------|---------------|-----|
-| `supervisor` | HEAD (main) | Orchestrates, doesn't need code changes |
-| `worker` | HEAD (main) | Implements fresh from main |
-| `reviewer` | Implementer's branch | Needs to see worker's changes |
-| `qa` | Implementer's branch | Needs to see worker's changes |
+### Branch Structure
 
-When spawning a reviewer or QA agent, wiggum looks up the ticket's `assigned_agent_id` (the implementer) and branches from their branch:
+| Branch Type | Format | Purpose |
+|-------------|--------|---------|
+| Feature branch | `feature/tk-xxxx` | Accumulates all work for a ticket |
+| Worker branch | `worker-0`, `worker-1` | Individual worker's changes |
+| Reviewer branch | `reviewer-0` | Reviewer's working copy |
+| QA branch | `qa-0` | QA's working copy |
+
+### Branch Flow
+
+| Role | Branches From | Merges To | Why |
+|------|---------------|-----------|-----|
+| `supervisor` | HEAD (main) | — | Orchestrates, doesn't need code changes |
+| `worker` | `feature/tk-xxxx` | `feature/tk-xxxx` | Works on ticket feature branch |
+| `reviewer` | Worker's branch | — | Sees worker's changes |
+| `qa` | Worker's branch | — | Sees worker's changes |
+
+### Lifecycle
+
+1. **Worker spawns**: Creates `feature/tk-xxxx` if it doesn't exist, branches from it
+2. **Worker submits for review**: Worker branch merges to `feature/tk-xxxx`
+3. **Review passes**: Reviewer branch is auto-deleted
+4. **QA passes**: QA branch is auto-deleted
+5. **Ticket done**: `feature/tk-xxxx` can be merged to main via `wiggum branch merge`
 
 ```
-main ─────────────────────────────
+main ─────────────────────────────────────────────────
        \
-        worker-0 ← implementer commits here
+        feature/tk-xxxx ← feature branch (created on first worker spawn)
               \
-               reviewer-0 ← sees worker's changes
+               worker-0 ← worker branches from feature
                      \
-                      qa-0 ← sees full history
+                      (merges back to feature/tk-xxxx on review)
+                            \
+                             reviewer-0 ← branches from worker
+                                   \
+                                    (deleted after review passes)
+                                          \
+                                           qa-0 ← branches from worker
+                                                 \
+                                                  (deleted after QA passes)
 ```
 
-This ensures reviewers and QA agents see the implementer's work without requiring the implementer to merge to main first.
+### Merge Conflict Handling
+
+When transitioning to `review`, the worker's changes are merged to the feature branch. If conflicts occur:
+
+1. Transition is blocked with exit code 7 (`EXIT_MERGE_CONFLICT`)
+2. Error message shows resolution steps
+3. Use `wiggum rebase` to help resolve conflicts
+4. Retry the transition after resolution
+
+### Branch Commands
+
+```bash
+# List all branches, grouped by ticket
+wiggum branch list [ticket-id]
+
+# Clean up all branches for a completed ticket
+wiggum branch cleanup <ticket-id>
+
+# Merge feature branch to main when ticket is done
+wiggum branch merge <ticket-id>
+
+# Rebase current branch on feature branch (conflict resolution)
+wiggum rebase [ticket-id]
+```
+
+### Viewing Changes
 
 To see what the implementer changed:
 
 ```bash
 git diff main..HEAD
 git log main..HEAD --oneline
+```
+
+To see what's on the feature branch:
+
+```bash
+git diff main..feature/tk-xxxx
+git log main..feature/tk-xxxx --oneline
 ```
 
 ---
