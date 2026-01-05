@@ -387,11 +387,14 @@ cmd_spawn() {
     local tmux_pane_id
     if [[ "$new_session" == "true" ]]; then
         # Reuse the initial pane created with the session - get its pane_id
-        tmux_pane_id=$(tmux display-message -t "$WIGGUM_SESSION:main" -p '#{pane_id}')
+        # Use list-panes to get the actual pane ID in the target session
+        # (display-message can return wrong pane when run from another session)
+        tmux_pane_id=$(tmux list-panes -t "$WIGGUM_SESSION:main" -F '#{pane_id}' | head -1)
     else
         # Split window to create new pane
-        tmux split-window -t "$WIGGUM_SESSION:main" -h
-        tmux_pane_id=$(tmux display-message -t "$WIGGUM_SESSION:main" -p '#{pane_id}')
+        # Use -P -F to get the new pane's ID directly from split-window
+        # (display-message can return wrong pane when run from another session)
+        tmux_pane_id=$(tmux split-window -t "$WIGGUM_SESSION:main" -h -P -F '#{pane_id}')
     fi
 
     # Set pane title (include ticket if assigned)

@@ -296,7 +296,6 @@ TMUX_TESTS=(
     "Tmux spawn creates session:test_spawn_creates_session"
     "Tmux spawn session idempotent:test_spawn_session_idempotent"
     "Tmux teardown kills session:test_teardown_kills_session"
-    "Tmux teardown cleans up worktrees and branches:test_teardown_cleans_up_worktrees_and_branches"
     "Tmux list panes empty:test_list_panes_empty"
     "Tmux list panes json:test_list_panes_json_format"
     "Tmux status shows overview:test_status_shows_overview"

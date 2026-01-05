@@ -134,6 +134,11 @@ install_bare_repo_hooks() {
     local bare_repo="$1"
     local hooks_dir="$bare_repo/hooks"
 
+    # Get the wiggum installation root for embedding in hooks
+    # This ensures hooks use the same wiggum version that initialized the project
+    local wiggum_root
+    wiggum_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
     # Pre-receive hook for validation
     cat >"$hooks_dir/pre-receive" <<'HOOK'
 #!/bin/bash
@@ -204,79 +209,82 @@ HOOK
     chmod +x "$hooks_dir/pre-receive"
 
     # Post-receive hook for triggering wiggum hooks
-    cat >"$hooks_dir/post-receive" <<'HOOK'
+    # Note: Using unquoted heredoc to embed $wiggum_root at init time
+    # Other variables are escaped with \$ to remain as literals
+    cat >"$hooks_dir/post-receive" <<HOOK
 #!/bin/bash
 
 # Find project root (hooks -> tickets.git -> .wiggum -> proj)
-TICKETS_GIT="$(cd "$(dirname "$0")/.." && pwd)"
-MAIN_WIGGUM_DIR="$(dirname "$TICKETS_GIT")"
-PROJECT_ROOT="$(dirname "$MAIN_WIGGUM_DIR")"
+TICKETS_GIT="\$(cd "\$(dirname "\$0")/.." && pwd)"
+MAIN_WIGGUM_DIR="\$(dirname "\$TICKETS_GIT")"
+PROJECT_ROOT="\$(dirname "\$MAIN_WIGGUM_DIR")"
 
 # Log file for hook errors
-HOOK_LOG="$MAIN_WIGGUM_DIR/hook.log"
+HOOK_LOG="\$MAIN_WIGGUM_DIR/hook.log"
 
 log_error() {
-    echo "[$(date -Iseconds)] $*" >> "$HOOK_LOG"
+    echo "[\$(date -Iseconds)] \$*" >> "\$HOOK_LOG"
 }
 
-# Find wiggum binary
-WIGGUM_BIN=$(command -v wiggum || echo "$PROJECT_ROOT/bin/wiggum")
+# Wiggum binary path - embedded at init time for version consistency
+# (critical for worktree-based development and testing)
+WIGGUM_BIN="$wiggum_root/bin/wiggum"
 
 while read -r oldrev newrev refname; do
     # Skip deletions
-    [[ "$newrev" == "0000000000000000000000000000000000000000" ]] && continue
-    [[ "$oldrev" == "0000000000000000000000000000000000000000" ]] && continue
+    [[ "\$newrev" == "0000000000000000000000000000000000000000" ]] && continue
+    [[ "\$oldrev" == "0000000000000000000000000000000000000000" ]] && continue
 
     # Check each changed ticket
-    for file in $(git diff --name-only "$oldrev" "$newrev"); do
-        [[ "$file" == *.md ]] || continue
+    for file in \$(git diff --name-only "\$oldrev" "\$newrev"); do
+        [[ "\$file" == *.md ]] || continue
 
-        ticket_id=$(basename "$file" .md)
-        old_state=$(git show "$oldrev:$file" | awk '/^state:/{print $2}' || echo "")
-        new_state=$(git show "$newrev:$file" | awk '/^state:/{print $2}' || echo "")
+        ticket_id=\$(basename "\$file" .md)
+        old_state=\$(git show "\$oldrev:\$file" | awk '/^state:/{print \$2}' || echo "")
+        new_state=\$(git show "\$newrev:\$file" | awk '/^state:/{print \$2}' || echo "")
 
-        [[ "$old_state" == "$new_state" ]] && continue
+        [[ "\$old_state" == "\$new_state" ]] && continue
 
         # Export state info for hooks
-        export WIGGUM_PREV_STATE="$old_state"
-        export WIGGUM_NEW_STATE="$new_state"
+        export WIGGUM_PREV_STATE="\$old_state"
+        export WIGGUM_NEW_STATE="\$new_state"
 
         # Trigger appropriate hook via wiggum (background, log errors)
         # CRITICAL: unset GIT_DIR to prevent pollution - git sets it to tickets.git
         # which breaks worktree operations in the main project
-        case "$new_state" in
+        case "\$new_state" in
             review)
-                (cd "$PROJECT_ROOT" && unset GIT_DIR GIT_WORK_TREE && "$WIGGUM_BIN" hook run on-draft-done "$ticket_id" 2>>"$HOOK_LOG" &)
+                (cd "\$PROJECT_ROOT" && unset GIT_DIR GIT_WORK_TREE && "\$WIGGUM_BIN" hook run on-draft-done "\$ticket_id" 2>>"\$HOOK_LOG" &)
                 ;;
             qa)
-                (cd "$PROJECT_ROOT" && unset GIT_DIR GIT_WORK_TREE && "$WIGGUM_BIN" hook run on-review-done "$ticket_id" 2>>"$HOOK_LOG" &)
+                (cd "\$PROJECT_ROOT" && unset GIT_DIR GIT_WORK_TREE && "\$WIGGUM_BIN" hook run on-review-done "\$ticket_id" 2>>"\$HOOK_LOG" &)
                 ;;
             in-progress)
-                if [[ "$old_state" == "review" ]]; then
-                    (cd "$PROJECT_ROOT" && unset GIT_DIR GIT_WORK_TREE && "$WIGGUM_BIN" hook run on-review-rejected "$ticket_id" 2>>"$HOOK_LOG" &)
-                elif [[ "$old_state" == "qa" ]]; then
-                    (cd "$PROJECT_ROOT" && unset GIT_DIR GIT_WORK_TREE && "$WIGGUM_BIN" hook run on-qa-rejected "$ticket_id" 2>>"$HOOK_LOG" &)
+                if [[ "\$old_state" == "review" ]]; then
+                    (cd "\$PROJECT_ROOT" && unset GIT_DIR GIT_WORK_TREE && "\$WIGGUM_BIN" hook run on-review-rejected "\$ticket_id" 2>>"\$HOOK_LOG" &)
+                elif [[ "\$old_state" == "qa" ]]; then
+                    (cd "\$PROJECT_ROOT" && unset GIT_DIR GIT_WORK_TREE && "\$WIGGUM_BIN" hook run on-qa-rejected "\$ticket_id" 2>>"\$HOOK_LOG" &)
                 fi
                 ;;
             done)
-                (cd "$PROJECT_ROOT" && unset GIT_DIR GIT_WORK_TREE && "$WIGGUM_BIN" hook run on-qa-done "$ticket_id" 2>>"$HOOK_LOG" &)
-                (cd "$PROJECT_ROOT" && unset GIT_DIR GIT_WORK_TREE && "$WIGGUM_BIN" hook run on-close "$ticket_id" 2>>"$HOOK_LOG" &)
+                (cd "\$PROJECT_ROOT" && unset GIT_DIR GIT_WORK_TREE && "\$WIGGUM_BIN" hook run on-qa-done "\$ticket_id" 2>>"\$HOOK_LOG" &)
+                (cd "\$PROJECT_ROOT" && unset GIT_DIR GIT_WORK_TREE && "\$WIGGUM_BIN" hook run on-close "\$ticket_id" 2>>"\$HOOK_LOG" &)
                 ;;
         esac
     done
 done
 
 # Update main clone for observability commands
-MAIN_TICKETS="$MAIN_WIGGUM_DIR/tickets"
-if [[ -d "$MAIN_TICKETS/.git" ]]; then
+MAIN_TICKETS="\$MAIN_WIGGUM_DIR/tickets"
+if [[ -d "\$MAIN_TICKETS/.git" ]]; then
     # Check for uncommitted changes that would block pull
-    if ! git -C "$MAIN_TICKETS" diff --quiet || \
-       ! git -C "$MAIN_TICKETS" diff --cached --quiet; then
-        log_error "MAIN CLONE DIRTY: uncommitted changes in $MAIN_TICKETS - skipping auto-pull"
-        log_error "Run: git -C $MAIN_TICKETS status"
+    if ! git -C "\$MAIN_TICKETS" diff --quiet || \\
+       ! git -C "\$MAIN_TICKETS" diff --cached --quiet; then
+        log_error "MAIN CLONE DIRTY: uncommitted changes in \$MAIN_TICKETS - skipping auto-pull"
+        log_error "Run: git -C \$MAIN_TICKETS status"
     else
-        if ! git -C "$MAIN_TICKETS" pull --rebase --quiet 2>&1; then
-            log_error "MAIN CLONE PULL FAILED: git -C $MAIN_TICKETS pull --rebase"
+        if ! git -C "\$MAIN_TICKETS" pull --rebase --quiet 2>&1; then
+            log_error "MAIN CLONE PULL FAILED: git -C \$MAIN_TICKETS pull --rebase"
         fi
     fi
 fi
