@@ -29,7 +29,7 @@ get_bare_repo() {
 bare_list_tickets() {
     local bare_repo
     bare_repo=$(get_bare_repo)
-    git -C "$bare_repo" ls-tree --name-only HEAD 2>/dev/null | grep '\.md$' | grep -v '^\.gitkeep'
+    git -C "$bare_repo" ls-tree --name-only HEAD | grep '\.md$' | grep -v '^\.gitkeep'
 }
 
 # Read ticket content from bare repo
@@ -37,7 +37,7 @@ bare_read_ticket() {
     local ticket_file="$1"
     local bare_repo
     bare_repo=$(get_bare_repo)
-    git -C "$bare_repo" show "HEAD:$ticket_file" 2>/dev/null
+    git -C "$bare_repo" show "HEAD:$ticket_file"
 }
 
 # Get frontmatter value from ticket in bare repo
@@ -60,14 +60,14 @@ bare_write_ticket() {
 
     local tmp
     tmp=$(mktemp -d)
-    git clone "$bare_repo" "$tmp" --quiet 2>/dev/null
+    git clone "$bare_repo" "$tmp" --quiet
     git -C "$tmp" config user.email "wiggum@local"
     git -C "$tmp" config user.name "wiggum"
 
-    echo "$content" > "$tmp/$ticket_file"
+    echo "$content" >"$tmp/$ticket_file"
     git -C "$tmp" add "$ticket_file"
-    git -c commit.gpgsign=false -C "$tmp" commit -m "$commit_msg" --quiet 2>/dev/null || true
-    git -C "$tmp" push origin main --quiet 2>/dev/null || true
+    git -c commit.gpgsign=false -C "$tmp" commit -m "$commit_msg" --quiet || true
+    git -C "$tmp" push origin main --quiet || true
     rm -rf "$tmp"
 }
 
@@ -80,14 +80,14 @@ bare_delete_ticket() {
 
     local tmp
     tmp=$(mktemp -d)
-    git clone "$bare_repo" "$tmp" --quiet 2>/dev/null
+    git clone "$bare_repo" "$tmp" --quiet
     git -C "$tmp" config user.email "wiggum@local"
     git -C "$tmp" config user.name "wiggum"
 
     rm -f "$tmp/$ticket_file"
     git -C "$tmp" add -A
-    git -c commit.gpgsign=false -C "$tmp" commit -m "$commit_msg" --quiet 2>/dev/null || true
-    git -C "$tmp" push origin main --quiet 2>/dev/null || true
+    git -c commit.gpgsign=false -C "$tmp" commit -m "$commit_msg" --quiet || true
+    git -C "$tmp" push origin main --quiet || true
     rm -rf "$tmp"
 }
 
@@ -107,24 +107,24 @@ init_bare_tickets_repo() {
     install_bare_repo_hooks "$tickets_git"
 
     # Configure merge strategy for markdown
-    echo "*.md merge=union" > "$tickets_git/info/attributes"
+    echo "*.md merge=union" >"$tickets_git/info/attributes"
 
     # Create initial commit via temp clone
     local tmp
     tmp=$(mktemp -d)
-    git clone "$tickets_git" "$tmp" --quiet 2>/dev/null || true
+    git clone "$tickets_git" "$tmp" --quiet || true
     git -C "$tmp" config user.email "wiggum@local"
     git -C "$tmp" config user.name "wiggum"
     # Create initial branch explicitly
-    git -C "$tmp" checkout -b main 2>/dev/null || true
+    git -C "$tmp" checkout -b main || true
     touch "$tmp/.gitkeep"
     git -C "$tmp" add .
-    git -c commit.gpgsign=false -C "$tmp" commit -m "Initial commit" --quiet 2>/dev/null || true
-    git -C "$tmp" push -u origin main --quiet 2>/dev/null || true
+    git -c commit.gpgsign=false -C "$tmp" commit -m "Initial commit" --quiet || true
+    git -C "$tmp" push -u origin main --quiet || true
     rm -rf "$tmp"
 
     # Set HEAD to main branch
-    git -C "$tickets_git" symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+    git -C "$tickets_git" symbolic-ref HEAD refs/heads/main || true
 
     success "Created bare tickets repository"
 }
@@ -135,7 +135,7 @@ install_bare_repo_hooks() {
     local hooks_dir="$bare_repo/hooks"
 
     # Pre-receive hook for validation
-    cat > "$hooks_dir/pre-receive" <<'HOOK'
+    cat >"$hooks_dir/pre-receive" <<'HOOK'
 #!/bin/bash
 set -e
 
@@ -161,7 +161,7 @@ while read -r oldrev newrev refname; do
     if [[ "$oldrev" == "0000000000000000000000000000000000000000" ]]; then
         files=$(git ls-tree -r --name-only "$newrev")
     else
-        files=$(git diff --name-only "$oldrev" "$newrev" 2>/dev/null || echo "")
+        files=$(git diff --name-only "$oldrev" "$newrev" || echo "")
     fi
 
     # Check each changed ticket file
@@ -172,9 +172,9 @@ while read -r oldrev newrev refname; do
         # Get old and new state
         old_state=""
         if [[ "$oldrev" != "0000000000000000000000000000000000000000" ]]; then
-            old_state=$(git show "$oldrev:$file" 2>/dev/null | awk '/^state:/{print $2}' || echo "")
+            old_state=$(git show "$oldrev:$file" | awk '/^state:/{print $2}' || echo "")
         fi
-        new_state=$(git show "$newrev:$file" 2>/dev/null | awk '/^state:/{print $2}' || echo "")
+        new_state=$(git show "$newrev:$file" | awk '/^state:/{print $2}' || echo "")
 
         # Skip if state unchanged (body-only edit)
         [[ "$old_state" == "$new_state" ]] && continue
@@ -204,7 +204,7 @@ HOOK
     chmod +x "$hooks_dir/pre-receive"
 
     # Post-receive hook for triggering wiggum hooks
-    cat > "$hooks_dir/post-receive" <<'HOOK'
+    cat >"$hooks_dir/post-receive" <<'HOOK'
 #!/bin/bash
 
 # Find project root (hooks -> tickets.git -> .wiggum -> proj)
@@ -220,7 +220,7 @@ log_error() {
 }
 
 # Find wiggum binary
-WIGGUM_BIN=$(command -v wiggum 2>/dev/null || echo "$PROJECT_ROOT/bin/wiggum")
+WIGGUM_BIN=$(command -v wiggum || echo "$PROJECT_ROOT/bin/wiggum")
 
 while read -r oldrev newrev refname; do
     # Skip deletions
@@ -228,12 +228,12 @@ while read -r oldrev newrev refname; do
     [[ "$oldrev" == "0000000000000000000000000000000000000000" ]] && continue
 
     # Check each changed ticket
-    for file in $(git diff --name-only "$oldrev" "$newrev" 2>/dev/null); do
+    for file in $(git diff --name-only "$oldrev" "$newrev"); do
         [[ "$file" == *.md ]] || continue
 
         ticket_id=$(basename "$file" .md)
-        old_state=$(git show "$oldrev:$file" 2>/dev/null | awk '/^state:/{print $2}' || echo "")
-        new_state=$(git show "$newrev:$file" 2>/dev/null | awk '/^state:/{print $2}' || echo "")
+        old_state=$(git show "$oldrev:$file" | awk '/^state:/{print $2}' || echo "")
+        new_state=$(git show "$newrev:$file" | awk '/^state:/{print $2}' || echo "")
 
         [[ "$old_state" == "$new_state" ]] && continue
 
@@ -270,8 +270,8 @@ done
 MAIN_TICKETS="$MAIN_WIGGUM_DIR/tickets"
 if [[ -d "$MAIN_TICKETS/.git" ]]; then
     # Check for uncommitted changes that would block pull
-    if ! git -C "$MAIN_TICKETS" diff --quiet 2>/dev/null || \
-       ! git -C "$MAIN_TICKETS" diff --cached --quiet 2>/dev/null; then
+    if ! git -C "$MAIN_TICKETS" diff --quiet || \
+       ! git -C "$MAIN_TICKETS" diff --cached --quiet; then
         log_error "MAIN CLONE DIRTY: uncommitted changes in $MAIN_TICKETS - skipping auto-pull"
         log_error "Run: git -C $MAIN_TICKETS status"
     else
@@ -325,8 +325,8 @@ ticket_sync_pull() {
     [[ ! -d "$TICKETS_DIR/.git" ]] && return 0
 
     # Check for uncommitted changes that would block rebase
-    if ! git -C "$TICKETS_DIR" diff --quiet 2>/dev/null || \
-       ! git -C "$TICKETS_DIR" diff --cached --quiet 2>/dev/null; then
+    if ! git -C "$TICKETS_DIR" diff --quiet ||
+        ! git -C "$TICKETS_DIR" diff --cached --quiet; then
         warn "Ticket sync pull blocked: uncommitted changes in $TICKETS_DIR"
         warn "Run: git -C $TICKETS_DIR status"
         return 1
@@ -364,7 +364,7 @@ ticket_sync_push() {
     fi
 
     # Commit if there are staged changes
-    if ! git -C "$TICKETS_DIR" diff --cached --quiet 2>/dev/null; then
+    if ! git -C "$TICKETS_DIR" diff --cached --quiet; then
         if ! git -c commit.gpgsign=false -C "$TICKETS_DIR" commit -m "$message" --quiet 2>&1; then
             warn "Ticket sync: commit failed in $TICKETS_DIR"
             return 1
@@ -396,19 +396,19 @@ ticket_sync() {
     fi
 
     case "$mode" in
-        pull|--pull)
-            ticket_sync_pull
-            success "Pulled latest tickets"
-            ;;
-        push|--push)
-            ticket_sync_push "Manual sync"
-            success "Pushed ticket changes"
-            ;;
-        both|*)
-            ticket_sync_pull
-            ticket_sync_push "Manual sync"
-            success "Synced tickets"
-            ;;
+    pull | --pull)
+        ticket_sync_pull
+        success "Pulled latest tickets"
+        ;;
+    push | --push)
+        ticket_sync_push "Manual sync"
+        success "Pushed ticket changes"
+        ;;
+    both | *)
+        ticket_sync_pull
+        ticket_sync_push "Manual sync"
+        success "Synced tickets"
+        ;;
     esac
 }
 
@@ -418,17 +418,17 @@ cmd_ticket_sync() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --pull)
-                mode="pull"
-                shift
-                ;;
-            --push)
-                mode="push"
-                shift
-                ;;
-            *)
-                shift
-                ;;
+        --pull)
+            mode="pull"
+            shift
+            ;;
+        --push)
+            mode="push"
+            shift
+            ;;
+        *)
+            shift
+            ;;
         esac
     done
 

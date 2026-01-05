@@ -34,8 +34,8 @@ run_hook() {
     ticket_content=$(bare_read_ticket "${ticket_id}.md" 2>/dev/null)
 
     export WIGGUM_TICKET_ID="$ticket_id"
-    export WIGGUM_TICKET_PATH="$MAIN_TICKETS_DIR/${ticket_id}.md"  # For backwards compat
-    export WIGGUM_TICKET_CONTENT="$ticket_content"  # Fresh content from bare repo
+    export WIGGUM_TICKET_PATH="$TICKETS_DIR/${ticket_id}.md"
+    export WIGGUM_TICKET_CONTENT="$ticket_content" # Fresh content from bare repo
     export WIGGUM_SESSION
     export WIGGUM_HOOKS_DIR="$HOOKS_DIR"
     # WIGGUM_PREV_STATE and WIGGUM_NEW_STATE set by post-receive hook
@@ -67,20 +67,20 @@ cmd_hook() {
     shift
 
     case "$subcmd" in
-        run)
-            if [[ $# -lt 2 ]]; then
-                error "Usage: wiggum hook run <hook-name> <ticket-id>"
-                exit "$EXIT_INVALID_ARGS"
-            fi
-            run_hook "$1" "$2"
-            ;;
-        list)
-            list_hooks
-            ;;
-        *)
-            error "Unknown hook subcommand: $subcmd"
+    run)
+        if [[ $# -lt 2 ]]; then
+            error "Usage: wiggum hook run <hook-name> <ticket-id>"
             exit "$EXIT_INVALID_ARGS"
-            ;;
+        fi
+        run_hook "$1" "$2"
+        ;;
+    list)
+        list_hooks
+        ;;
+    *)
+        error "Unknown hook subcommand: $subcmd"
+        exit "$EXIT_INVALID_ARGS"
+        ;;
     esac
 }
 
@@ -93,7 +93,7 @@ list_hooks() {
         for hook in "$HOOKS_DIR"/*; do
             [[ -f "$hook" ]] || continue
             local name
-    name=$(basename "$hook")
+            name=$(basename "$hook")
             local status="inactive"
             [[ -x "$hook" ]] && status="active"
             echo "  $name ($status)"

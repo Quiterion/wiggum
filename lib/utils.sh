@@ -42,6 +42,7 @@ warn() {
 
 error() {
     echo -e "${RED}[error]${NC} $*" >&2
+    exit 1
 }
 
 debug() {
@@ -140,11 +141,10 @@ require_project() {
     TICKETS_DIR="$WIGGUM_DIR/tickets"
 
     # Shared resources come from main project
-    MAIN_TICKETS_DIR="$MAIN_WIGGUM_DIR/tickets"
     HOOKS_DIR="$MAIN_WIGGUM_DIR/hooks"
     PROMPTS_DIR="$MAIN_WIGGUM_DIR/prompts"
 
-    export PROJECT_ROOT MAIN_PROJECT_ROOT WIGGUM_DIR MAIN_WIGGUM_DIR TICKETS_DIR MAIN_TICKETS_DIR HOOKS_DIR PROMPTS_DIR
+    export PROJECT_ROOT MAIN_PROJECT_ROOT WIGGUM_DIR MAIN_WIGGUM_DIR TICKETS_DIR HOOKS_DIR PROMPTS_DIR
 }
 
 # Match partial ticket ID
@@ -152,6 +152,7 @@ resolve_ticket_id() {
     local partial="$1"
     require_project
 
+    ticket_sync_pull || error "Failed to pull ticket changes"
     # Exact match first
     if [[ -f "$TICKETS_DIR/${partial}.md" ]]; then
         echo "$partial"

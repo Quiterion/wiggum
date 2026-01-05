@@ -3,6 +3,8 @@
 # pane.sh - tmux pane management
 #
 
+source "$WIGGUM_LIB/ticket.sh"
+
 # Track pane assignments in a file
 PANE_REGISTRY_FILE=".wiggum/panes.json"
 
@@ -51,33 +53,14 @@ get_next_agent_index() {
     # Count keys that start with role- pattern using jq
     local count
     if command -v jq &>/dev/null; then
-        count=$(jq --arg role "$role" '[keys[] | select(startswith($role + "-"))] | length' "$registry" 2>/dev/null || echo 0)
+        count=$(jq --arg role "$role" '[keys[] | select(startswith($role + "-"))] | length' "$registry" || echo 0)
     else
         # Fallback: count matches of "role-" pattern in keys
-        count=$(grep -c "\"${role}-[0-9]*\":" "$registry" 2>/dev/null || echo 0)
+        count=$(grep -c "\"${role}-[0-9]*\":" "$registry" || echo 0)
     fi
     # Ensure we have a valid number
     [[ -z "$count" || ! "$count" =~ ^[0-9]+$ ]] && count=0
     echo "$count"
-}
-
-# Look up ticket assigned to an agent by scanning tickets
-# Usage: get_agent_ticket <agent-id>
-# Returns: ticket ID or empty string if not assigned
-get_agent_ticket() {
-    local agent_id="$1"
-    require_project
-
-    # Scan MAIN tickets (canonical source of truth for observability)
-    for ticket_file in "$MAIN_TICKETS_DIR"/*.md; do
-        [[ -f "$ticket_file" ]] || continue
-        local assigned
-        assigned=$(get_frontmatter_value "$ticket_file" "assigned_agent_id" 2>/dev/null)
-        if [[ "$assigned" == "$agent_id" ]]; then
-            basename "$ticket_file" .md
-            return
-        fi
-    done
 }
 
 # Register a pane in the object-based registry
@@ -141,7 +124,7 @@ unregister_pane() {
         # Fallback: recreate without the entry (less reliable)
         local temp
         temp=$(mktemp)
-        grep -v "\"$agent_id\":" "$registry" >"$temp" 2>/dev/null || echo "{}" >"$temp"
+        grep -v "\"$agent_id\":" "$registry" >"$temp" || echo "{}" >"$temp"
         mv "$temp" "$registry"
     fi
 }
@@ -157,11 +140,11 @@ get_tmux_pane_id() {
     [[ -f "$registry" ]] || return 0
 
     if command -v jq &>/dev/null; then
-        jq -r --arg id "$agent_id" '.[$id].tmux_pane_id // empty' "$registry" 2>/dev/null
+        jq -r --arg id "$agent_id" '.[$id].tmux_pane_id // empty' "$registry"
     else
         # Fallback: grep for the entry
         local entry
-        entry=$(grep "\"$agent_id\":" "$registry" 2>/dev/null || true)
+        entry=$(grep "\"$agent_id\":" "$registry" || true)
         if [[ -n "$entry" ]]; then
             echo "$entry" | grep -o '"tmux_pane_id": "[^"]*"' | cut -d'"' -f4
         fi
@@ -199,12 +182,15 @@ build_agent_prompt() {
     local comment=""
 
     if [[ -n "$ticket_id" ]]; then
+
+        ticket_sync_pull || error "Failed to pull ticket changes"
+
         local ticket_path="$TICKETS_DIR/${ticket_id}.md"
         if [[ -f "$ticket_path" ]]; then
             ticket_content=$(cat "$ticket_path")
 
             # Extract comment section if present
-            comment=$(awk '/^## Comment/,/^## [^F]|^$/' "$ticket_path" 2>/dev/null || true)
+            comment=$(awk '/^## Comment/,/^## [^F]|^$/' "$ticket_path" || true)
 
             # Extract dependencies
             dependencies=$(get_frontmatter_value "$ticket_path" "depends_on" || true)
@@ -213,7 +199,7 @@ build_agent_prompt() {
 
     # Gather project specs (for supervisor)
     if [[ "$role" == "supervisor" ]] && [[ -d "$MAIN_PROJECT_ROOT/specs" ]]; then
-        project_specs=$(find "$MAIN_PROJECT_ROOT/specs" -name "*.md" -exec basename {} \; 2>/dev/null | head -20 | tr '\n' ', ')
+        project_specs=$(find "$MAIN_PROJECT_ROOT/specs" -name "*.md" -exec basename {} \; | head -20 | tr '\n' ', ')
         project_specs="Available specs: $project_specs"
     fi
 
@@ -255,7 +241,7 @@ cmd_spawn() {
         # Source wiggum tmux config
         local tmux_conf="$MAIN_WIGGUM_DIR/tmux.conf"
         [[ ! -f "$tmux_conf" ]] && tmux_conf="$WIGGUM_DEFAULTS/tmux.conf"
-        [[ -f "$tmux_conf" ]] && tmux source-file "$tmux_conf" 2>/dev/null
+        [[ -f "$tmux_conf" ]] && tmux source-file "$tmux_conf"
     fi
 
     # Supervisor doesn't need a ticket
@@ -293,10 +279,10 @@ cmd_spawn() {
         # For reviewer/QA roles, branch from the implementer's branch to see their changes
         local start_point=""
         if [[ "$role" != "worker" ]] && [[ "$role" != "supervisor" ]] && [[ -n "$ticket_id" ]]; then
-            # Read assigned_agent_id from bare repo (source of truth)
+            # Read assigned_agent_id
             local impl_agent
             local ticket_content
-            ticket_content=$(bare_read_ticket "${ticket_id}.md" 2>/dev/null)
+            ticket_content=$(read_ticket "${ticket_id}.md")
             impl_agent=$(echo "$ticket_content" | awk '/^assigned_agent_id:/{print $2; exit}')
             if [[ -n "$impl_agent" ]]; then
                 # Check if the implementer's branch exists
@@ -315,7 +301,7 @@ cmd_spawn() {
             branch_worktree=$(git worktree list --porcelain | grep -A2 "^worktree " | grep -B1 "^branch refs/heads/$agent_id$" | grep "^worktree " | cut -d' ' -f2)
             if [[ -z "$branch_worktree" ]]; then
                 debug "Deleting stale branch $agent_id (no worktree)"
-                git branch -D "$agent_id" --quiet 2>/dev/null || true
+                git branch -D "$agent_id" --quiet || true
             fi
         fi
 
@@ -356,7 +342,7 @@ cmd_spawn() {
     # (fixes issue where supervisor creates ticket but worker doesn't see it)
     if [[ -d "$TICKETS_DIR/.git" ]]; then
         debug "Syncing caller's tickets before clone"
-        ticket_sync_push "Pre-spawn sync" 2>/dev/null || true
+        ticket_sync_push "Pre-spawn sync" || true
     fi
 
     # ALWAYS ensure .wiggum directory and fresh tickets clone exist
@@ -365,8 +351,8 @@ cmd_spawn() {
     if [[ "$worktree_existed" == "true" ]] && [[ -d "$worktree_path/.wiggum/tickets/.git" ]]; then
         # Worktree exists with tickets clone - pull latest
         debug "Refreshing tickets in existing worktree"
-        git -C "$worktree_path/.wiggum/tickets" fetch origin --quiet 2>/dev/null || true
-        git -C "$worktree_path/.wiggum/tickets" reset --hard origin/main --quiet 2>/dev/null || true
+        git -C "$worktree_path/.wiggum/tickets" fetch origin --quiet || true
+        git -C "$worktree_path/.wiggum/tickets" reset --hard origin/main --quiet || true
     else
         # Fresh clone needed
         clone_tickets_to_worktree "$worktree_path/.wiggum" || true
@@ -412,7 +398,7 @@ cmd_spawn() {
     send_pane_input "$tmux_pane_id" "$initial_msg"
 
     # Apply layout
-    tmux select-layout -t "$WIGGUM_SESSION:main" "$WIGGUM_LAYOUT" 2>/dev/null || true
+    tmux select-layout -t "$WIGGUM_SESSION:main" "$WIGGUM_LAYOUT" || true
 
     # Register the pane (agent_id -> tmux_pane_id mapping)
     register_pane "$agent_id" "$role" "$tmux_pane_id"
@@ -478,7 +464,7 @@ cmd_list() {
     ids)
         # List agent IDs (object keys)
         if [[ -f "$registry" ]] && command -v jq &>/dev/null; then
-            jq -r 'keys[]' "$registry" 2>/dev/null
+            jq -r 'keys[]' "$registry"
         elif [[ -f "$registry" ]]; then
             grep -o '"[^"]*":' "$registry" | tr -d '":' | grep -v '^$'
         fi
@@ -491,7 +477,7 @@ cmd_list() {
         if [[ -f "$registry" ]] && command -v jq &>/dev/null; then
             # Use jq for proper JSON parsing of object-based registry
             local keys
-            keys=$(jq -r 'keys[]' "$registry" 2>/dev/null)
+            keys=$(jq -r 'keys[]' "$registry")
             for agent_id in $keys; do
                 local role started uptime ticket
                 role=$(jq -r --arg id "$agent_id" '.[$id].role' "$registry")
@@ -511,7 +497,7 @@ cmd_list() {
                 # Basic extraction - look for the agent's entry
                 local role started uptime ticket
                 local entry
-                entry=$(grep -o "\"$agent_id\":[^}]*}" "$registry" 2>/dev/null || true)
+                entry=$(grep -o "\"$agent_id\":[^}]*}" "$registry" || true)
                 role=$(echo "$entry" | grep -o '"role"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
                 started=$(echo "$entry" | grep -o '"started_at"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
                 if [[ -n "$role" ]]; then
@@ -572,7 +558,7 @@ cmd_kill() {
 
     # Kill the tmux pane by pane ID
     if [[ -n "$tmux_pane_id" ]]; then
-        tmux kill-pane -t "$tmux_pane_id" 2>/dev/null &&
+        tmux kill-pane -t "$tmux_pane_id" &&
             info "Killed tmux pane"
     fi
 
@@ -673,12 +659,12 @@ cmd_has_capacity() {
     if [[ -f "$registry" ]] && command -v jq &>/dev/null; then
         # Count all entries, subtract supervisors
         local total supervisors
-        total=$(jq 'keys | length' "$registry" 2>/dev/null || echo 0)
-        supervisors=$(jq '[keys[] | select(startswith("supervisor-"))] | length' "$registry" 2>/dev/null || echo 0)
+        total=$(jq 'keys | length' "$registry" || echo 0)
+        supervisors=$(jq '[keys[] | select(startswith("supervisor-"))] | length' "$registry" || echo 0)
         current=$((total - supervisors))
     elif [[ -f "$registry" ]]; then
         # Fallback: count keys excluding supervisor-*
-        current=$(grep -c '"worker-\|"reviewer-\|"qa-' "$registry" 2>/dev/null || echo 0)
+        current=$(grep -c '"worker-\|"reviewer-\|"qa-' "$registry" || echo 0)
     fi
 
     if [[ $current -lt $WIGGUM_MAX_AGENTS ]]; then

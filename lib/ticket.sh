@@ -18,25 +18,27 @@ has_ticket_clone() {
     [[ -d "$TICKETS_DIR/.git" ]]
 }
 
-# List all ticket IDs
-list_ticket_ids() {
-    if has_ticket_clone; then
-        for f in "$TICKETS_DIR"/*.md; do
-            [[ -f "$f" ]] && basename "$f" .md
-        done
-    else
-        bare_list_tickets | sed 's/\.md$//'
-    fi
-}
-
 # Read ticket content
 read_ticket() {
-    local id="$1"
-    if has_ticket_clone; then
-        cat "$TICKETS_DIR/${id}.md"
-    else
-        bare_read_ticket "${id}.md"
+    if [[ $# -lt 1 ]]; then
+        error "Usage: wiggum ticket show <id>"
+        exit "$EXIT_INVALID_ARGS"
     fi
+
+    local id
+    id=$(resolve_ticket_id "$1") || exit "$EXIT_TICKET_NOT_FOUND"
+    require_project
+
+    # Sync before read operation
+    ticket_sync_pull || error "Failed to pull ticket changes"
+
+    local ticket_path="$TICKETS_DIR/${id}.md"
+    if [[ ! -f "$ticket_path" ]]; then
+        error "Ticket not found: $id"
+        exit "$EXIT_TICKET_NOT_FOUND"
+    fi
+
+    cat "$ticket_path"
 }
 
 # Write ticket content
@@ -45,12 +47,9 @@ write_ticket() {
     local content="$2"
     local commit_msg="${3:-Update ticket: $id}"
 
-    #if has_ticket_clone; then
+    ticket_sync_pull || error "Failed to pull ticket changes"
     echo "$content" >"$TICKETS_DIR/${id}.md"
-    ticket_sync_push "$commit_msg" || warn "Failed to push ticket changes"
-    #else
-    #    bare_write_ticket "${id}.md" "$content" "$commit_msg"
-    #fi
+    ticket_sync_push "$commit_msg" || error "Failed to push ticket changes"
 }
 
 # Get frontmatter value from ticket (works with both modes)
@@ -79,14 +78,32 @@ set_ticket_value() {
     write_ticket "$id" "$updated" "$commit_msg"
 }
 
+# Look up ticket assigned to an agent by scanning tickets
+# Usage: get_agent_ticket <agent-id>
+# Returns: ticket ID or empty string if not assigned
+get_agent_ticket() {
+    local agent_id="$1"
+    require_project
+
+    # Sync before write operation
+    ticket_sync_pull || error "Failed to pull ticket changes"
+
+    for ticket_file in "$TICKETS_DIR"/*.md; do
+        [[ -f "$ticket_file" ]] || continue
+        local assigned
+        assigned=$(get_frontmatter_value "$ticket_file" "assigned_agent_id")
+        if [[ "$assigned" == "$agent_id" ]]; then
+            basename "$ticket_file" .md
+            return
+        fi
+    done
+}
+
 # Check if ticket exists
 ticket_exists() {
     local id="$1"
-    if has_ticket_clone; then
-        [[ -f "$TICKETS_DIR/${id}.md" ]]
-    else
-        bare_read_ticket "${id}.md" &>/dev/null
-    fi
+    ticket_sync_pull || error "Failed to pull ticket changes"
+    [[ -f "$TICKETS_DIR/${id}.md" ]]
 }
 
 # Get ticket title (first H1)
@@ -194,7 +211,7 @@ ticket_create() {
             deps+=("$2")
             shift 2
             ;;
-        --description|-d)
+        --description | -d)
             description="$2"
             shift 2
             ;;
@@ -315,7 +332,7 @@ ticket_list() {
     require_project
 
     # Sync before read operation
-    ticket_sync_pull || warn "Failed to pull ticket changes"
+    ticket_sync_pull || error "Failed to pull ticket changes"
 
     echo ""
     printf "${BOLD}%-10s %-10s %-10s %-3s %-40s${NC}\n" "ID" "STATE" "TYPE" "PRI" "TITLE"
@@ -362,7 +379,7 @@ ticket_show() {
     require_project
 
     # Sync before read operation
-    ticket_sync_pull || warn "Failed to pull ticket changes"
+    ticket_sync_pull || error "Failed to pull ticket changes"
 
     local ticket_path="$TICKETS_DIR/${id}.md"
     if [[ ! -f "$ticket_path" ]]; then
@@ -392,7 +409,7 @@ ticket_ready() {
     require_project
 
     # Sync before read operation
-    ticket_sync_pull || warn "Failed to pull ticket changes"
+    ticket_sync_pull || error "Failed to pull ticket changes"
 
     local count=0
     for ticket_file in "$TICKETS_DIR"/*.md; do
@@ -436,7 +453,7 @@ ticket_blocked() {
     require_project
 
     # Sync before read operation
-    ticket_sync_pull || warn "Failed to pull ticket changes"
+    ticket_sync_pull || error "Failed to pull ticket changes"
 
     for ticket_file in "$TICKETS_DIR"/*.md; do
         [[ -f "$ticket_file" ]] || continue
@@ -482,7 +499,7 @@ ticket_tree() {
     require_project
 
     # Sync before read operation
-    ticket_sync_pull || warn "Failed to pull ticket changes"
+    ticket_sync_pull || error "Failed to pull ticket changes"
 
     _print_tree "$id" 0
 }
@@ -551,7 +568,7 @@ ticket_transition() {
 
     # Sync before write operation
     if [[ "$no_sync" != "true" ]]; then
-        ticket_sync_pull || warn "Failed to pull ticket changes"
+        ticket_sync_pull || error "Failed to pull ticket changes"
     fi
 
     local ticket_path="$TICKETS_DIR/${id}.md"
@@ -587,7 +604,7 @@ ticket_transition() {
     # Sync after write operation (hooks triggered by post-receive in bare repo)
     # shellcheck disable=SC2015
     if [[ "$no_sync" != "true" ]]; then
-        ticket_sync_push "Transition $id: $current_state → $new_state" || warn "Failed to push ticket changes"
+        ticket_sync_push "Transition $id: $current_state → $new_state" || error "Failed to push ticket changes"
     fi
 
     success "Transitioned $id: $current_state -> $new_state"
@@ -605,9 +622,10 @@ ticket_edit() {
     require_project
     load_config
 
+    ticket_sync_pull || error "Failed to pull ticket changes"
     local ticket_path="$TICKETS_DIR/${id}.md"
     ${WIGGUM_EDITOR} "$ticket_path"
-    ticket_sync_push || warn "Failed to push ticket changes"
+    ticket_sync_push || error "Failed to push ticket changes"
 }
 
 # Add comment to ticket
@@ -626,7 +644,7 @@ ticket_comment() {
     require_project
 
     # Sync before write operation
-    ticket_sync_pull || warn "Failed to pull ticket changes"
+    ticket_sync_pull || error "Failed to pull ticket changes"
 
     local ticket_path="$TICKETS_DIR/${id}.md"
 
@@ -648,11 +666,11 @@ $message
             next
         }
         { print }
-    ' "$ticket_path" > "$temp"
+    ' "$ticket_path" >"$temp"
     mv "$temp" "$ticket_path"
 
     # Sync after write operation
-    ticket_sync_push "Comments on $id from $source" || warn "Failed to push ticket changes"
+    ticket_sync_push "Comments on $id from $source" || error "Failed to push ticket changes"
 
     # Pinging done in hook
     ## Ping assigned agent if any
@@ -686,7 +704,7 @@ ticket_assign() {
     require_project
 
     # Sync before write operation
-    ticket_sync_pull || warn "Failed to pull ticket changes"
+    ticket_sync_pull || error "Failed to pull ticket changes"
 
     local ticket_path="$TICKETS_DIR/${id}.md"
     if [[ ! -f "$ticket_path" ]]; then
@@ -699,7 +717,7 @@ ticket_assign() {
     set_frontmatter_value "$ticket_path" "assigned_at" "$(timestamp)"
 
     # Sync after write operation
-    ticket_sync_push "Assign $agent_id to $id" || warn "Failed to push ticket changes"
+    ticket_sync_push "Assign $agent_id to $id" || error "Failed to push ticket changes"
 
     success "Assigned $agent_id to $id"
 }
@@ -717,7 +735,7 @@ ticket_unassign() {
     require_project
 
     # Sync before write operation
-    ticket_sync_pull || warn "Failed to pull ticket changes"
+    ticket_sync_pull || error "Failed to pull ticket changes"
 
     local ticket_path="$TICKETS_DIR/${id}.md"
     if [[ ! -f "$ticket_path" ]]; then
@@ -733,7 +751,7 @@ ticket_unassign() {
     set_frontmatter_value "$ticket_path" "assigned_at" ""
 
     # Sync after write operation
-    ticket_sync_push "Unassign $id" || warn "Failed to push ticket changes"
+    ticket_sync_push "Unassign $id" || error "Failed to push ticket changes"
 
     if [[ -n "$prev_agent" ]]; then
         success "Unassigned $prev_agent from $id"

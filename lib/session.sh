@@ -54,8 +54,7 @@ cmd_init() {
     WIGGUM_DIR="$PROJECT_ROOT/.wiggum"
     MAIN_WIGGUM_DIR="$WIGGUM_DIR"
     TICKETS_DIR="$WIGGUM_DIR/tickets"
-    MAIN_TICKETS_DIR="$TICKETS_DIR" # At init, they're the same
-    export PROJECT_ROOT MAIN_PROJECT_ROOT WIGGUM_DIR MAIN_WIGGUM_DIR TICKETS_DIR MAIN_TICKETS_DIR
+    export PROJECT_ROOT MAIN_PROJECT_ROOT WIGGUM_DIR MAIN_WIGGUM_DIR TICKETS_DIR
 
     # Initialize bare tickets repository
     init_bare_tickets_repo
