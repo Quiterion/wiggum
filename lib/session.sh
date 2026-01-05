@@ -75,13 +75,14 @@ cmd_init() {
         fi
     done
 
-    # Create Claude Code settings for worktree agents
-    local claude_dir=".claude"
-    if [[ ! -d "$claude_dir" ]]; then
-        mkdir -p "$claude_dir"
-    fi
-    if [[ ! -f "$claude_dir/settings.local.json" ]]; then
-        cat >"$claude_dir/settings.local.json" <<'CLAUDE_SETTINGS'
+    # Create Claude Code settings for worktree agents if using Claude
+    if [[ "${WIGGUM_AGENT_CMD:-}" == "claude" ]] || [[ "${WIGGUM_AGENT_CMD:-}" == *"claude "* ]]; then
+        local claude_dir=".claude"
+        if [[ ! -d "$claude_dir" ]]; then
+            mkdir -p "$claude_dir"
+        fi
+        if [[ ! -f "$claude_dir/settings.local.json" ]]; then
+            cat >"$claude_dir/settings.local.json" <<'CLAUDE_SETTINGS'
 {
   "permissions": {
     "allow": [
@@ -96,10 +97,11 @@ cmd_init() {
   }
 }
 CLAUDE_SETTINGS
-        success "Created Claude Code settings"
-        # Add to gitignore
-        if ! grep -qxF ".claude/settings.local.json" "$gitignore" 2>/dev/null; then
-            echo ".claude/settings.local.json" >>"$gitignore"
+            success "Created Claude Code settings"
+            # Add to gitignore
+            if ! grep -qxF ".claude/settings.local.json" "$gitignore" 2>/dev/null; then
+                echo ".claude/settings.local.json" >>"$gitignore"
+            fi
         fi
     fi
 

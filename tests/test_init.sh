@@ -87,6 +87,19 @@ test_commands_from_subdirectory() {
     assert_file_exists "../../.wiggum/tickets/${id}.md" "Ticket should be created at project root"
 }
 
+test_init_creates_claude_dir_when_agent_is_claude() {
+    export WIGGUM_AGENT_CMD="claude"
+    "$WIGGUM_BIN" init
+    assert_dir_exists ".claude" "Init should create .claude directory when agent is claude"
+    assert_file_exists ".claude/settings.local.json" "Init should create claude settings when agent is claude"
+}
+
+test_init_does_not_create_claude_dir_when_agent_is_not_claude() {
+    export WIGGUM_AGENT_CMD="not-claude"
+    "$WIGGUM_BIN" init
+    assert_not_exists ".claude" "Init should NOT create .claude directory when agent is not claude"
+}
+
 #
 # Test list
 #
@@ -103,6 +116,8 @@ INIT_TESTS=(
     "Init from subdirectory:test_init_from_subdirectory"
     "Init from tickets clone:test_init_from_tickets_clone"
     "Commands from subdirectory:test_commands_from_subdirectory"
+    "Creates .claude when agent is claude:test_init_creates_claude_dir_when_agent_is_claude"
+    "Does not create .claude when agent is not claude:test_init_does_not_create_claude_dir_when_agent_is_not_claude"
 )
 
 # Run if executed directly

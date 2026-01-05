@@ -213,18 +213,6 @@ See [tools.md](./tools.md) for details.
 
 ---
 
-### wiggum context
-
-Build a briefing for a ticket.
-
-```bash
-wiggum context <ticket-id> [prompt]
-```
-
-See [tools.md](./tools.md) for details.
-
----
-
 ### wiggum logs
 
 Raw pane output (for debugging).
