@@ -198,15 +198,12 @@ Provide a concise summary (2-3 sentences max). Focus on:
 - Any blockers or concerns
 "
 
-    # Invoke ephemeral agent
-    if command -v "$WIGGUM_AGENT_CMD" &>/dev/null; then
-        echo "$context" | "$WIGGUM_AGENT_CMD" --print 2>/dev/null || echo "$context"
-    else
+    fetch_fallback() {
         # Fallback: just show recent activity indicator
         local lines
-    lines=$(echo "$pane_output" | wc -l)
+        lines=$(echo "$pane_output" | wc -l)
         local last_line
-    last_line=$(echo "$pane_output" | tail -1)
+        last_line=$(echo "$pane_output" | tail -1)
         echo "Agent $agent_id: $lines lines of output"
         echo "Last activity: $last_line"
         if [[ -n "$ticket_id" ]]; then
@@ -214,7 +211,9 @@ Provide a concise summary (2-3 sentences max). Focus on:
             state=$(bare_get_frontmatter_value "${ticket_id}.md" "state" 2>/dev/null)
             echo "Ticket $ticket_id in state: $state"
         fi
-    fi
+    }
+
+    cmd_ephemeral "$context" || fetch_fallback
 }
 
 # Summarize the whole hive
@@ -273,7 +272,7 @@ cmd_digest() {
             [[ "$s" == "$state" ]] && count=$((count + 1))
         done
         context="$context- $state: $count
-"
+        "
     done
 
     context="$context
@@ -283,14 +282,7 @@ $prompt
 
 Provide a brief executive summary.
 "
-
-    # Invoke ephemeral agent or fallback
-    if command -v "$WIGGUM_AGENT_CMD" &>/dev/null; then
-        echo "$context" | "$WIGGUM_AGENT_CMD" --print 2>/dev/null || echo "$context"
-    else
-        # Fallback: show raw context
-        echo "$context"
-    fi
+    cmd_ephemeral "$context" || echo "$context"
 }
 
 # Show raw agent pane logs
@@ -432,12 +424,7 @@ $related_specs
 $prompt
 "
 
-    # Output or process
-    if command -v "$WIGGUM_AGENT_CMD" &>/dev/null && [[ "$prompt" != "Provide a full briefing for working on this ticket." ]]; then
-        echo "$context" | "$WIGGUM_AGENT_CMD" --print 2>/dev/null || echo "$context"
-    else
-        echo "$context"
-    fi
+    cmd_ephemeral "$context" || echo "$context"
 }
 
 # Run an ephemeral agent (internal use)
@@ -462,9 +449,24 @@ cmd_ephemeral() {
     local input
     input=$(cat)
 
+    if [[ -z "$input" && -z "$prompt" ]]; then
+        error "No context provided to ephemeral agent"
+    fi
+
+    local context
+    context="$prompt"
+
+    if [[ -n "$context" ]]; then 
+        if [[ -z "$input" ]]; then
+            context+="\n\n$input"
+        fi
+    else 
+        context="$input"
+    fi
+
     if command -v "$WIGGUM_AGENT_CMD" &>/dev/null; then
-        echo -e "$prompt\n\n$input" | "$WIGGUM_AGENT_CMD" --print 2>/dev/null
+        "$WIGGUM_AGENT_CMD" --print -p "$context" || warn "Error invoking $WIGGUM_AGENT_CMD"
     else
-        echo "$input"
+        error '$WIGGUM_AGENT_CMD is unset or does not exist'
     fi
 }
