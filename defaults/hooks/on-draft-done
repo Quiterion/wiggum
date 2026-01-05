@@ -18,4 +18,4 @@ TICKET_ID="${1:-$WIGGUM_TICKET_ID}"
 echo "[hook] Implementation done for $TICKET_ID, spawning reviewer"
 
 # Spawn a reviewer agent
-wiggum spawn reviewer "$TICKET_ID"
+"${WIGGUM_BIN:-wiggum}" spawn reviewer "$TICKET_ID"

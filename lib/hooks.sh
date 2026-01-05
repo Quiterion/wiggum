@@ -38,6 +38,9 @@ run_hook() {
     export WIGGUM_TICKET_CONTENT="$ticket_content" # Fresh content from bare repo
     export WIGGUM_SESSION
     export WIGGUM_HOOKS_DIR="$HOOKS_DIR"
+    # Export the wiggum binary path so hooks use the same version
+    # (important for worktree-based development and testing)
+    export WIGGUM_BIN="${WIGGUM_BIN:-$(command -v wiggum)}"
     # WIGGUM_PREV_STATE and WIGGUM_NEW_STATE set by post-receive hook
     # WIGGUM_AGENT_ID computed from ticket (from bare repo)
     if [[ -n "$ticket_content" ]]; then

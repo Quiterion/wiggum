@@ -22,5 +22,5 @@ WORK_AGENT=$(grep 'assigned_agent_id:' "$WIGGUM_TICKET_PATH" | awk '{print $2}')
 
 # Ping the implementer if still running
 if [[ -n "$WORK_AGENT" ]]; then
-    wiggum ping "$WORK_AGENT" "Review comment added to your ticket. Please address and re-submit." || true
+    "${WIGGUM_BIN:-wiggum}" ping "$WORK_AGENT" "Review comment added to your ticket. Please address and re-submit." || true
 fi

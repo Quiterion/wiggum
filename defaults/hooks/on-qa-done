@@ -19,9 +19,9 @@ echo "[hook] QA passed for $TICKET_ID"
 
 # Check if all in-progress tickets are now done
 # If so, could auto-tag a release
-ACTIVE=$(wiggum ticket list --state implement 2>/dev/null | wc -l)
-ACTIVE=$((ACTIVE + $(wiggum ticket list --state review 2>/dev/null | wc -l)))
-ACTIVE=$((ACTIVE + $(wiggum ticket list --state qa 2>/dev/null | wc -l)))
+ACTIVE=$("${WIGGUM_BIN:-wiggum}" ticket list --state implement 2>/dev/null | wc -l)
+ACTIVE=$((ACTIVE + $("${WIGGUM_BIN:-wiggum}" ticket list --state review 2>/dev/null | wc -l)))
+ACTIVE=$((ACTIVE + $("${WIGGUM_BIN:-wiggum}" ticket list --state qa 2>/dev/null | wc -l)))
 
 if [[ "$ACTIVE" -le 1 ]]; then  # 1 because header line
     echo "[hook] All tickets complete!"
