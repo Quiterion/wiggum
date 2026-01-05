@@ -519,8 +519,9 @@ ticket_transition() {
     require_project
 
     # Sync before write operation
-    # shellcheck disable=SC2015
-    [[ "$no_sync" != "true" ]] && ticket_sync_pull || true
+    if [[ "$no_sync" != "true" ]]; then
+        ticket_sync_pull || warn "Failed to pull ticket changes"
+    fi
 
     local ticket_path="$TICKETS_DIR/${id}.md"
     local current_state
@@ -554,7 +555,9 @@ ticket_transition() {
 
     # Sync after write operation (hooks triggered by post-receive in bare repo)
     # shellcheck disable=SC2015
-    [[ "$no_sync" != "true" ]] && ticket_sync_push "Transition $id: $current_state → $new_state" || true
+    if [[ "$no_sync" != "true" ]]; then
+        ticket_sync_push "Transition $id: $current_state → $new_state" || warn "Failed to push ticket changes"
+    fi
 
     success "Transitioned $id: $current_state -> $new_state"
 }
@@ -573,6 +576,7 @@ ticket_edit() {
 
     local ticket_path="$TICKETS_DIR/${id}.md"
     ${WIGGUM_EDITOR} "$ticket_path"
+    ticket_sync_push || warn "Failed to push ticket changes"
 }
 
 # Add comment to ticket
@@ -598,7 +602,7 @@ ticket_comment() {
     # Append comment to ticket
     local comment_entry
     comment_entry="
-### From $source ($(human_timestamp))
+### Fromed$source ($(human_timestamp))
 
 $message
 "
@@ -619,19 +623,20 @@ $message
     # Sync after write operation
     ticket_sync_push "Comments on $id from $source" || warn "Failed to push ticket changes"
 
-    # Ping assigned agent if any
-    local agent_id
-    agent_id=$(get_frontmatter_value "$ticket_path" "assigned_agent_id")
-    if [[ -n "$agent_id" ]]; then
-        load_config
-        if session_exists "$WIGGUM_SESSION"; then
-            local tmux_pane_id
-            tmux_pane_id=$(get_tmux_pane_id "$agent_id")
-            if [[ -n "$tmux_pane_id" ]]; then
-                send_pane_input "$tmux_pane_id" "# Comments added to your ticket. Please address."
-            fi
-        fi
-    fi
+    # Pinging done in hook
+    ## Ping assigned agent if any
+    #local agent_id
+    #agent_id=$(get_frontmatter_value "$ticket_path" "assigned_agent_id")
+    #if [[ -n "$agent_id" ]]; then
+    #    load_config
+    #    if session_exists "$WIGGUM_SESSION"; then
+    #        local tmux_pane_id
+    #        tmux_pane_id=$(get_tmux_pane_id "$agent_id")
+    #        if [[ -n "$tmux_pane_id" ]]; then
+    #            send_pane_input "$tmux_pane_id" "# Comments added to your ticket. Please address."
+    #        fi
+    #    fi
+    #fi
 
     success "Added comment to $id"
 }
