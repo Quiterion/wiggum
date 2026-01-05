@@ -9,10 +9,9 @@ Each agent role has a prompt template that defines its behavior. Prompts are mar
 When `wiggum spawn <role> <ticket>` runs:
 
 1. Load role prompt from `.wiggum/prompts/<role>.md`
-2. Load ticket context via `wiggum context <ticket>`
-3. Load project specs referenced by ticket
-4. Compose into agent's initial prompt
-5. Start inner harness with composed prompt
+2. Substitute template variables (e.g., `{TICKET_CONTENT}`, `{DEPENDENCIES}`)
+3. Compose into agent's initial prompt
+4. Start inner harness with composed prompt
 
 ---
 

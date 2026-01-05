@@ -194,9 +194,6 @@ main() {
     logs)
         cmd_logs "$@"
         ;;
-    context)
-        cmd_context "$@"
-        ;;
 
     # Ticket subcommands
     ticket)

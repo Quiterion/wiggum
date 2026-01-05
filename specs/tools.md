@@ -89,44 +89,6 @@ wiggum fetch worker-0 "is the test coverage adequate?"
 
 ---
 
-### wiggum context
-
-Build a briefing for an agent about to start work.
-
-```bash
-wiggum context <ticket-id> [prompt]
-```
-
-**Arguments:**
-- `ticket-id` — The ticket to build context for
-- `prompt` — What aspect to focus on (optional)
-
-**Examples:**
-
-```bash
-# Full briefing
-wiggum context tk-5c46
-# → "Ticket: Implement auth middleware
-#    Dependencies: tk-3a1b (done) - database schema
-#    Related specs: specs/api.md, specs/auth.md
-#    Recent activity: Created 2h ago, no work started yet"
-
-# Focused briefing
-wiggum context tk-5c46 "what specs are relevant?"
-# → "Relevant specs:
-#    - specs/auth.md: JWT format, token expiry rules
-#    - specs/api.md: Middleware chain, error response format"
-```
-
-**Implementation:**
-1. Read ticket file
-2. Resolve dependencies, read their summaries
-3. Scan specs/ for related documents (by keyword, references)
-4. Invoke ephemeral agent to synthesize briefing
-5. Return summary
-
----
-
 ### wiggum ticket comment
 
 Append comment to a ticket and notify the worker. See [cli.md](./cli.md#comment) for command details.

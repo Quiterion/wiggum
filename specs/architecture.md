@@ -41,7 +41,7 @@
 | **tmux** | Process isolation, pane lifecycle, attach/detach, log capture |
 | **tickets** | Task state, dependencies, unified state machine |
 | **hooks** | Trigger pipeline stages on ticket state transitions |
-| **tools** | Summarization, comment injection, context building |
+| **tools** | Summarization, comment injection |
 | **prompts** | Role-specific agent instructions |
 
 ---

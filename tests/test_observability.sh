@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# test_observability.sh - Observability tools tests (fetch, logs, digest, context)
+# test_observability.sh - Observability tools tests (fetch, logs, digest)
 #
 
 # SC2034: Test arrays are used by main test runner via source
@@ -103,29 +103,6 @@ test_digest_fails_no_session() {
     fi
 }
 
-test_context_requires_ticket_id() {
-    "$WIGGUM_BIN" init
-
-    # context without ticket-id should fail
-    if "$WIGGUM_BIN" context 2>/dev/null; then
-        echo "Context should require ticket-id argument"
-        return 1
-    fi
-}
-
-test_context_builds_for_ticket() {
-    "$WIGGUM_BIN" init
-    local ticket_id
-    ticket_id=$("$WIGGUM_BIN" ticket create "Context test" --type feature)
-
-    local output
-    output=$("$WIGGUM_BIN" context "$ticket_id")
-
-    # Should include ticket content
-    assert_contains "$output" "Context test" "Should include ticket title"
-    assert_contains "$output" "feature" "Should include ticket type"
-}
-
 #
 # Test list
 #
@@ -137,8 +114,6 @@ OBSERVABILITY_TESTS=(
     "Logs requires pane-id:test_logs_requires_pane_id"
     "Logs fails no session:test_logs_fails_no_session"
     "Digest fails no session:test_digest_fails_no_session"
-    "Context requires ticket-id:test_context_requires_ticket_id"
-    "Context builds for ticket:test_context_builds_for_ticket"
 )
 
 # Run if executed directly

@@ -602,7 +602,7 @@ ticket_comment() {
     # Append comment to ticket
     local comment_entry
     comment_entry="
-### Frome $source ($(human_timestamp))
+### From $source ($(human_timestamp))
 
 $message
 "
