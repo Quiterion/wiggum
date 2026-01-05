@@ -290,7 +290,7 @@ ticket_list() {
     printf "${BOLD}%-10s %-10s %-10s %-3s %-40s${NC}\n" "ID" "STATE" "TYPE" "PRI" "TITLE"
     echo "-------------------------------------------------------------------------------"
 
-    for ticket_file in "$MAIN_TICKETS_DIR"/*.md; do
+    for ticket_file in "$TICKETS_DIR"/*.md; do
         [[ -f "$ticket_file" ]] || continue
 
         local id
@@ -602,7 +602,7 @@ ticket_comment() {
     # Append comment to ticket
     local comment_entry
     comment_entry="
-### Fromed$source ($(human_timestamp))
+### Frome $source ($(human_timestamp))
 
 $message
 "
