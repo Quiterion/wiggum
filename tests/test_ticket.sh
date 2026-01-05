@@ -450,6 +450,117 @@ test_ticket_comment_multiple() {
 }
 
 #
+# Tests: get_agent_ticket
+#
+
+test_get_agent_ticket_prefers_non_done() {
+    "$WIGGUM_BIN" init
+
+    # Create two tickets
+    local ticket1
+    ticket1=$("$WIGGUM_BIN" ticket create "First ticket")
+    local ticket2
+    ticket2=$("$WIGGUM_BIN" ticket create "Second ticket")
+
+    # Assign both to the same agent
+    "$WIGGUM_BIN" ticket assign "$ticket1" "worker-0"
+    "$WIGGUM_BIN" ticket assign "$ticket2" "worker-0"
+
+    # Transition ticket1 through workflow to done
+    "$WIGGUM_BIN" ticket transition "$ticket1" in-progress --no-hooks
+    "$WIGGUM_BIN" ticket transition "$ticket1" review --no-hooks
+    "$WIGGUM_BIN" ticket transition "$ticket1" qa --no-hooks
+    "$WIGGUM_BIN" ticket transition "$ticket1" done --no-hooks
+
+    # Now we need to test get_agent_ticket - it's called internally by wiggum list
+    # We can test it via the agent list output which uses get_agent_ticket
+    # First let's source the libs and call get_agent_ticket directly
+
+    # Source the wiggum libs
+    local wiggum_root
+    wiggum_root="$(dirname "$WIGGUM_BIN")/.."
+    # shellcheck disable=SC1091
+    source "$wiggum_root/lib/config.sh"
+    # shellcheck disable=SC1091
+    source "$wiggum_root/lib/utils.sh"
+    # shellcheck disable=SC1091
+    source "$wiggum_root/lib/sync.sh"
+    # shellcheck disable=SC1091
+    source "$wiggum_root/lib/ticket.sh"
+
+    local result
+    result=$(get_agent_ticket "worker-0")
+
+    # Should return ticket2 (not done), not ticket1 (done)
+    assert_eq "$ticket2" "$result" "Should return non-done ticket, not done ticket"
+}
+
+test_get_agent_ticket_prefers_recent_when_same_state() {
+    "$WIGGUM_BIN" init
+
+    # Create two tickets
+    local ticket1
+    ticket1=$("$WIGGUM_BIN" ticket create "First ticket")
+
+    # Assign first ticket
+    "$WIGGUM_BIN" ticket assign "$ticket1" "worker-0"
+
+    # Wait a moment to ensure different timestamps
+    sleep 1
+
+    local ticket2
+    ticket2=$("$WIGGUM_BIN" ticket create "Second ticket")
+
+    # Assign second ticket (more recent)
+    "$WIGGUM_BIN" ticket assign "$ticket2" "worker-0"
+
+    # Source the wiggum libs
+    local wiggum_root
+    wiggum_root="$(dirname "$WIGGUM_BIN")/.."
+    # shellcheck disable=SC1091
+    source "$wiggum_root/lib/config.sh"
+    # shellcheck disable=SC1091
+    source "$wiggum_root/lib/utils.sh"
+    # shellcheck disable=SC1091
+    source "$wiggum_root/lib/sync.sh"
+    # shellcheck disable=SC1091
+    source "$wiggum_root/lib/ticket.sh"
+
+    local result
+    result=$(get_agent_ticket "worker-0")
+
+    # Should return ticket2 (more recently assigned)
+    assert_eq "$ticket2" "$result" "Should return most recently assigned ticket"
+}
+
+test_get_agent_ticket_returns_empty_for_unassigned() {
+    "$WIGGUM_BIN" init
+
+    local ticket1
+    ticket1=$("$WIGGUM_BIN" ticket create "Unassigned ticket")
+
+    # Don't assign to any agent
+
+    # Source the wiggum libs
+    local wiggum_root
+    wiggum_root="$(dirname "$WIGGUM_BIN")/.."
+    # shellcheck disable=SC1091
+    source "$wiggum_root/lib/config.sh"
+    # shellcheck disable=SC1091
+    source "$wiggum_root/lib/utils.sh"
+    # shellcheck disable=SC1091
+    source "$wiggum_root/lib/sync.sh"
+    # shellcheck disable=SC1091
+    source "$wiggum_root/lib/ticket.sh"
+
+    local result
+    result=$(get_agent_ticket "worker-0")
+
+    # Should return empty string
+    assert_eq "" "$result" "Should return empty for agent with no assigned tickets"
+}
+
+#
 # Tests: Utilities
 #
 
@@ -524,6 +635,11 @@ TICKET_TESTS=(
     # Comment
     "Ticket comment appends:test_ticket_comment_appends"
     "Ticket comment multiple:test_ticket_comment_multiple"
+
+    # get_agent_ticket
+    "get_agent_ticket prefers non-done:test_get_agent_ticket_prefers_non_done"
+    "get_agent_ticket prefers recent same state:test_get_agent_ticket_prefers_recent_when_same_state"
+    "get_agent_ticket returns empty for unassigned:test_get_agent_ticket_returns_empty_for_unassigned"
 
     # Utilities
     "Require project fails outside:test_require_project_fails_outside"

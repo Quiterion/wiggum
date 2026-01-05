@@ -81,22 +81,56 @@ set_ticket_value() {
 # Look up ticket assigned to an agent by scanning tickets
 # Usage: get_agent_ticket <agent-id>
 # Returns: ticket ID or empty string if not assigned
+# Priority: non-done tickets first, then most recently assigned
 get_agent_ticket() {
     local agent_id="$1"
     require_project
 
-    # Sync before write operation
+    # Sync before read operation
     ticket_sync_pull || error "Failed to pull ticket changes"
+
+    local best_ticket=""
+    local best_assigned_at=""
+    local best_is_done=true
 
     for ticket_file in "$TICKETS_DIR"/*.md; do
         [[ -f "$ticket_file" ]] || continue
         local assigned
         assigned=$(get_frontmatter_value "$ticket_file" "assigned_agent_id")
         if [[ "$assigned" == "$agent_id" ]]; then
-            basename "$ticket_file" .md
-            return
+            local state assigned_at ticket_id
+            state=$(get_frontmatter_value "$ticket_file" "state")
+            assigned_at=$(get_frontmatter_value "$ticket_file" "assigned_at")
+            ticket_id=$(basename "$ticket_file" .md)
+
+            local is_done=false
+            [[ "$state" == "done" || "$state" == "closed" ]] && is_done=true
+
+            # Priority: non-done tickets over done tickets
+            # Within same priority: most recently assigned wins
+            if [[ -z "$best_ticket" ]]; then
+                # First match
+                best_ticket="$ticket_id"
+                best_assigned_at="$assigned_at"
+                best_is_done="$is_done"
+            elif [[ "$best_is_done" == "true" && "$is_done" == "false" ]]; then
+                # Current is not done, best is done -> prefer current
+                best_ticket="$ticket_id"
+                best_assigned_at="$assigned_at"
+                best_is_done="$is_done"
+            elif [[ "$best_is_done" == "$is_done" ]]; then
+                # Same done-status: prefer more recent assignment
+                if [[ "$assigned_at" > "$best_assigned_at" ]]; then
+                    best_ticket="$ticket_id"
+                    best_assigned_at="$assigned_at"
+                    best_is_done="$is_done"
+                fi
+            fi
+            # If best is not done and current is done, keep best
         fi
     done
+
+    echo "$best_ticket"
 }
 
 # Check if ticket exists
