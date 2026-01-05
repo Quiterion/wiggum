@@ -239,9 +239,11 @@ wiggum ticket <subcommand>
 
 ```bash
 wiggum ticket create <title> [flags]
-    --type TYPE         # feature, bug, task, epic, chore
-    --priority N        # 0-4 (0 = highest)
-    --dep ID            # Add dependency (repeatable)
+    --type TYPE            # feature, bug, task, epic, chore
+    --priority N           # 0-4 (0 = highest)
+    --dep ID               # Add dependency (repeatable)
+    --description, -d TEXT # Set ticket description
+    --acceptance-test TEXT # Add acceptance criterion (repeatable)
 
 wiggum ticket edit <id>
     # Opens ticket in $EDITOR

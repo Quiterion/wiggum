@@ -164,7 +164,7 @@ All ticket operations go through `wiggum ticket`:
 
 ```bash
 # Create
-wiggum ticket create "Title" [--type TYPE] [--priority N] [--dep ID]
+wiggum ticket create "Title" [--type TYPE] [--priority N] [--dep ID] [--description TEXT] [--acceptance-test TEXT]
 
 # Query
 wiggum ticket list              # All tickets

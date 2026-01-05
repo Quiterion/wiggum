@@ -167,7 +167,7 @@ cmd_ticket() {
 # Create a new ticket
 ticket_create() {
     if [[ $# -lt 1 ]]; then
-        error "Usage: wiggum ticket create <title> [--type TYPE] [--priority N] [--dep ID]"
+        error "Usage: wiggum ticket create <title> [--type TYPE] [--priority N] [--dep ID] [--description TEXT] [--acceptance-test TEXT]"
         exit "$EXIT_INVALID_ARGS"
     fi
 
@@ -177,6 +177,8 @@ ticket_create() {
     local type="task"
     local priority=2
     local deps=()
+    local description=""
+    local acceptance_tests=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -190,6 +192,14 @@ ticket_create() {
             ;;
         --dep)
             deps+=("$2")
+            shift 2
+            ;;
+        --description|-d)
+            description="$2"
+            shift 2
+            ;;
+        --acceptance-test)
+            acceptance_tests+=("$2")
             shift 2
             ;;
         *)
@@ -222,6 +232,27 @@ ticket_create() {
     # Determine initial state (ready if no deps, otherwise blocked implicitly)
     local state="ready"
 
+    # Build description content
+    local desc_content
+    if [[ -n "$description" ]]; then
+        desc_content="$description"
+    else
+        desc_content="[Add description here]"
+    fi
+
+    # Build acceptance criteria content
+    local ac_content
+    if [[ ${#acceptance_tests[@]} -gt 0 ]]; then
+        ac_content=""
+        for ac in "${acceptance_tests[@]}"; do
+            ac_content+="- [ ] $ac"$'\n'
+        done
+        # Remove trailing newline
+        ac_content="${ac_content%$'\n'}"
+    else
+        ac_content="- [ ] [Add criteria]"
+    fi
+
     # Build ticket content
     local content
     content="---
@@ -241,11 +272,11 @@ created_by: manual
 
 ## Description
 
-[Add description here]
+$desc_content
 
 ## Acceptance Criteria
 
-- [ ] [Add criteria]
+$ac_content
 
 ## Comments
 "

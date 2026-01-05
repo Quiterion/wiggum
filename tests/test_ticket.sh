@@ -75,6 +75,85 @@ test_ticket_create_has_title() {
     assert_contains "$content" "# My awesome feature" "Ticket should have title as H1"
 }
 
+test_ticket_create_with_description() {
+    "$WIGGUM_BIN" init
+    local ticket_id
+    ticket_id=$("$WIGGUM_BIN" ticket create "With description" --description "This is a custom description")
+
+    local content
+    content=$(cat ".wiggum/tickets/${ticket_id}.md")
+    assert_contains "$content" "This is a custom description" "Ticket should have custom description"
+    # Should not have placeholder
+    if [[ "$content" == *"[Add description here]"* ]]; then
+        echo "Should not have placeholder description"
+        return 1
+    fi
+}
+
+test_ticket_create_with_description_short_flag() {
+    "$WIGGUM_BIN" init
+    local ticket_id
+    ticket_id=$("$WIGGUM_BIN" ticket create "With short desc" -d "Short flag description")
+
+    local content
+    content=$(cat ".wiggum/tickets/${ticket_id}.md")
+    assert_contains "$content" "Short flag description" "Ticket should have description from -d flag"
+}
+
+test_ticket_create_with_acceptance_test() {
+    "$WIGGUM_BIN" init
+    local ticket_id
+    ticket_id=$("$WIGGUM_BIN" ticket create "With AC" --acceptance-test "Tests should pass")
+
+    local content
+    content=$(cat ".wiggum/tickets/${ticket_id}.md")
+    assert_contains "$content" "- [ ] Tests should pass" "Ticket should have acceptance criterion"
+    # Should not have placeholder
+    if [[ "$content" == *"[Add criteria]"* ]]; then
+        echo "Should not have placeholder criteria"
+        return 1
+    fi
+}
+
+test_ticket_create_with_multiple_acceptance_tests() {
+    "$WIGGUM_BIN" init
+    local ticket_id
+    ticket_id=$("$WIGGUM_BIN" ticket create "Multiple AC" \
+        --acceptance-test "First criterion" \
+        --acceptance-test "Second criterion" \
+        --acceptance-test "Third criterion")
+
+    local content
+    content=$(cat ".wiggum/tickets/${ticket_id}.md")
+    assert_contains "$content" "- [ ] First criterion" "Should have first criterion"
+    assert_contains "$content" "- [ ] Second criterion" "Should have second criterion"
+    assert_contains "$content" "- [ ] Third criterion" "Should have third criterion"
+}
+
+test_ticket_create_with_all_flags() {
+    "$WIGGUM_BIN" init
+    local dep_id
+    dep_id=$("$WIGGUM_BIN" ticket create "Dependency ticket")
+
+    local ticket_id
+    ticket_id=$("$WIGGUM_BIN" ticket create "Full ticket" \
+        --type feature \
+        --priority 0 \
+        --dep "$dep_id" \
+        --description "Complete description" \
+        --acceptance-test "AC one" \
+        --acceptance-test "AC two")
+
+    local content
+    content=$(cat ".wiggum/tickets/${ticket_id}.md")
+    assert_contains "$content" "type: feature" "Should have feature type"
+    assert_contains "$content" "priority: 0" "Should have priority 0"
+    assert_contains "$content" "$dep_id" "Should reference dependency"
+    assert_contains "$content" "Complete description" "Should have description"
+    assert_contains "$content" "- [ ] AC one" "Should have first AC"
+    assert_contains "$content" "- [ ] AC two" "Should have second AC"
+}
+
 #
 # Tests: Ticket list
 #
@@ -406,6 +485,11 @@ TICKET_TESTS=(
     "Ticket create initial state:test_ticket_create_initial_state"
     "Ticket create with dependency:test_ticket_create_with_dependency"
     "Ticket create has title:test_ticket_create_has_title"
+    "Ticket create with description:test_ticket_create_with_description"
+    "Ticket create with description short flag:test_ticket_create_with_description_short_flag"
+    "Ticket create with acceptance test:test_ticket_create_with_acceptance_test"
+    "Ticket create with multiple acceptance tests:test_ticket_create_with_multiple_acceptance_tests"
+    "Ticket create with all flags:test_ticket_create_with_all_flags"
 
     # List
     "Ticket list empty:test_ticket_list_empty"
