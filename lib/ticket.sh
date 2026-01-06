@@ -102,10 +102,10 @@ write_ticket_content() {
     ticket_sync_push "$commit_msg" || { error "Failed to push ticket changes"; return 1; }
 }
 
-# Get frontmatter value from ticket file (internal helper, NO sync)
-# Usage: get_frontmatter_value <file_path> <key>
-# Note: Caller must ensure sync before calling
-get_frontmatter_value() {
+# Get frontmatter value from ticket file (INTERNAL - do NOT call directly)
+# Usage: _get_frontmatter_value <file_path> <key>
+# Note: Caller must ensure sync before calling. External code should use get_ticket_field()
+_get_frontmatter_value() {
     local file="$1"
     local key="$2"
     awk -v key="$key" '
@@ -114,10 +114,10 @@ get_frontmatter_value() {
     ' "$file"
 }
 
-# Set frontmatter value in ticket file (internal helper, NO sync)
-# Usage: set_frontmatter_value <file_path> <key> <value>
-# Note: Caller must ensure sync before calling
-set_frontmatter_value() {
+# Set frontmatter value in ticket file (INTERNAL - do NOT call directly)
+# Usage: _set_frontmatter_value <file_path> <key> <value>
+# Note: Caller must ensure sync before calling. External code should use set_ticket_field()
+_set_frontmatter_value() {
     local file="$1"
     local key="$2"
     local value="$3"
@@ -129,6 +129,43 @@ set_frontmatter_value() {
         { print }
     ' "$file" > "$temp"
     mv "$temp" "$file"
+}
+
+# Get a ticket field value (CRUD - pulls first)
+# Usage: get_ticket_field <id> <field>
+# Returns: field value to stdout
+get_ticket_field() {
+    local id="$1"
+    local field="$2"
+    require_project
+    _ticket_ensure_sync || return 1
+
+    local ticket_path
+    ticket_path=$(_ticket_path "$id")
+    if [[ ! -f "$ticket_path" ]]; then
+        return 1
+    fi
+    _get_frontmatter_value "$ticket_path" "$field"
+}
+
+# Set a ticket field value (CRUD - pulls first, pushes after)
+# Usage: set_ticket_field <id> <field> <value> [commit_msg]
+set_ticket_field() {
+    local id="$1"
+    local field="$2"
+    local value="$3"
+    local commit_msg="${4:-Update $id: $field = $value}"
+
+    require_project
+    _ticket_ensure_sync || return 1
+
+    local ticket_path
+    ticket_path=$(_ticket_path "$id")
+    if [[ ! -f "$ticket_path" ]]; then
+        return 1
+    fi
+    _set_frontmatter_value "$ticket_path" "$field" "$value"
+    ticket_sync_push "$commit_msg" || { error "Failed to push ticket changes"; return 1; }
 }
 
 # Iterate over ticket files (internal helper for batch operations)
@@ -227,11 +264,11 @@ get_agent_ticket() {
         local ticket_id="$2"
 
         local assigned
-        assigned=$(get_frontmatter_value "$ticket_file" "assigned_agent_id")
+        assigned=$(_get_frontmatter_value "$ticket_file" "assigned_agent_id")
         if [[ "$assigned" == "$agent_id" ]]; then
             local state assigned_at
-            state=$(get_frontmatter_value "$ticket_file" "state")
-            assigned_at=$(get_frontmatter_value "$ticket_file" "assigned_at")
+            state=$(_get_frontmatter_value "$ticket_file" "state")
+            assigned_at=$(_get_frontmatter_value "$ticket_file" "assigned_at")
 
             local is_done=false
             [[ "$state" == "done" || "$state" == "closed" ]] && is_done=true
@@ -491,9 +528,9 @@ ticket_list() {
         local id="$2"
 
         local state type priority title
-        state=$(get_frontmatter_value "$ticket_file" "state")
-        type=$(get_frontmatter_value "$ticket_file" "type")
-        priority=$(get_frontmatter_value "$ticket_file" "priority")
+        state=$(_get_frontmatter_value "$ticket_file" "state")
+        type=$(_get_frontmatter_value "$ticket_file" "type")
+        priority=$(_get_frontmatter_value "$ticket_file" "priority")
 
         # Apply filters
         if [[ -n "$filter_state" ]] && [[ "$state" != "$filter_state" ]]; then return; fi
@@ -555,7 +592,7 @@ ticket_ready() {
         if [[ -n "$limit" ]] && [[ $count -ge $limit ]]; then return; fi
 
         local state
-        state=$(get_frontmatter_value "$ticket_file" "state")
+        state=$(_get_frontmatter_value "$ticket_file" "state")
         if [[ "$state" != "ready" ]]; then return; fi
 
         # Check dependencies
@@ -596,7 +633,7 @@ ticket_blocked() {
         local ticket_id="$2"
 
         local state
-        state=$(get_frontmatter_value "$ticket_file" "state")
+        state=$(_get_frontmatter_value "$ticket_file" "state")
         if [[ "$state" != "ready" ]]; then return; fi
 
         # Check dependencies
@@ -736,11 +773,11 @@ merge_to_feature() {
 
 # Transition ticket state
 # Hooks are now invoked directly from this function (not via git hooks)
-# Use --no-hooks to skip hook invocation (but still sync)
-# Use --no-sync to skip sync (and hooks, since hooks rely on sync)
+# Use --no-hooks to skip hook invocation (sync always happens)
+# Sync invariants are mandatory and cannot be disabled.
 ticket_transition() {
     if [[ $# -lt 2 ]]; then
-        error "Usage: wiggum ticket transition <id> <state> [--no-sync] [--no-hooks]"
+        error "Usage: wiggum ticket transition <id> <state> [--no-hooks]"
         exit "$EXIT_INVALID_ARGS"
     fi
 
@@ -749,15 +786,9 @@ ticket_transition() {
     local new_state="$2"
     shift 2
 
-    local no_sync=false
     local no_hooks=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
-        --no-sync)
-            no_sync=true
-            no_hooks=true  # No sync implies no hooks
-            shift
-            ;;
         --no-hooks)
             no_hooks=true
             shift
@@ -771,16 +802,14 @@ ticket_transition() {
     require_project
     load_config
 
-    # Use CRUD layer for sync
-    if [[ "$no_sync" != "true" ]]; then
-        _ticket_ensure_sync || exit 1
-    fi
+    # Use CRUD layer for sync (invariant: always sync before read)
+    _ticket_ensure_sync || exit 1
 
     # Use CRUD layer for path resolution
     local ticket_path
     ticket_path=$(_ticket_path "$id")
     local current_state
-    current_state=$(get_frontmatter_value "$ticket_path" "state")
+    current_state=$(_get_frontmatter_value "$ticket_path" "state")
 
     # Validate state using ticket_types
     local valid_states
@@ -828,7 +857,7 @@ ticket_transition() {
     # For in-progress -> review transitions, merge worker branch to feature branch
     if [[ "$current_state" == "in-progress" ]] && [[ "$new_state" == "review" ]]; then
         local assigned_agent
-        assigned_agent=$(get_frontmatter_value "$ticket_path" "assigned_agent_id")
+        assigned_agent=$(_get_frontmatter_value "$ticket_path" "assigned_agent_id")
         if [[ -n "$assigned_agent" ]] && [[ "$assigned_agent" == worker-* ]]; then
             info "Merging worker changes to feature branch before review..."
             if ! merge_to_feature "$id" "$assigned_agent"; then
@@ -838,13 +867,11 @@ ticket_transition() {
         fi
     fi
 
-    # Update state (uses internal helper, caller must push)
-    set_frontmatter_value "$ticket_path" "state" "$new_state"
+    # Update state (uses internal helper)
+    _set_frontmatter_value "$ticket_path" "state" "$new_state"
 
-    # Sync after write operation
-    if [[ "$no_sync" != "true" ]]; then
-        ticket_sync_push "Transition $id: $current_state → $new_state" || error "Failed to push ticket changes"
-    fi
+    # Sync after write operation (invariant: always push after write)
+    ticket_sync_push "Transition $id: $current_state → $new_state" || error "Failed to push ticket changes"
 
     # Run post-transition hooks (after successful sync)
     if [[ "$no_hooks" != "true" ]]; then
@@ -954,8 +981,8 @@ ticket_assign() {
     fi
 
     # Set assignment fields (uses internal helpers)
-    set_frontmatter_value "$ticket_path" "assigned_agent_id" "$agent_id"
-    set_frontmatter_value "$ticket_path" "assigned_at" "$(timestamp)"
+    _set_frontmatter_value "$ticket_path" "assigned_agent_id" "$agent_id"
+    _set_frontmatter_value "$ticket_path" "assigned_at" "$(timestamp)"
 
     # Sync after write operation
     ticket_sync_push "Assign $agent_id to $id" || error "Failed to push ticket changes"
@@ -985,11 +1012,11 @@ ticket_unassign() {
     fi
 
     local prev_agent
-    prev_agent=$(get_frontmatter_value "$ticket_path" "assigned_agent_id")
+    prev_agent=$(_get_frontmatter_value "$ticket_path" "assigned_agent_id")
 
     # Clear assignment fields (uses internal helpers)
-    set_frontmatter_value "$ticket_path" "assigned_agent_id" ""
-    set_frontmatter_value "$ticket_path" "assigned_at" ""
+    _set_frontmatter_value "$ticket_path" "assigned_agent_id" ""
+    _set_frontmatter_value "$ticket_path" "assigned_at" ""
 
     # Sync after write operation
     ticket_sync_push "Unassign $id" || error "Failed to push ticket changes"

@@ -21,14 +21,7 @@ Hooks live in `.wiggum/hooks/`:
 └── on-close
 ```
 
-**Note:** There are two hook systems in wiggum:
-
-1. **State transition hooks** (this document) — `.wiggum/hooks/` — your pipeline logic
-2. **Git hooks** — `.wiggum/tickets.git/hooks/` — internal plumbing
-
-The git hooks (`pre-receive`, `post-receive`) in the bare ticket repo handle validation and trigger the state transition hooks automatically. You typically only write state transition hooks; the git hooks are installed by `wiggum init`.
-
-See [tickets.md](./tickets.md#sync--distribution) for details on the git hook internals.
+**Note:** State transition hooks are invoked directly by `ticket_transition()` after sync operations complete. There are no git hooks in the bare ticket repo—all validation and hook invocation is handled by the ticket data layer.
 
 ---
 
@@ -153,38 +146,60 @@ echo "[metrics] $TICKET_ID closed. Created: $CREATED, Closed: $CLOSED"
 
 ## Hook Execution
 
-Hooks are executed by wiggum when state transitions occur:
+Hooks are executed directly by `ticket_transition()` during state transitions:
 
 1. Worker calls `wiggum ticket transition <id> <state>`
-2. wiggum validates the transition
-3. wiggum updates the ticket file
-4. wiggum executes the appropriate hook (if present)
-5. Hook runs with full context available
+2. CRUD layer pulls latest state from origin
+3. wiggum validates the transition using ticket_types.json
+4. **Pre-transition hooks** run (synchronous, can block transition)
+5. wiggum updates the ticket file locally
+6. CRUD layer pushes changes to origin
+7. **Post-transition hooks** run (asynchronous, background)
+
+### Pre-Transition Hooks
+
+Pre-hooks run **before** the state change is committed. They can:
+- Validate preconditions (e.g., all tests pass)
+- Block the transition by returning non-zero exit code
+- Run in the worktree context with full access to code
+
+### Post-Transition Hooks
+
+Post-hooks run **after** the state change is pushed. They:
+- Run asynchronously (don't block the caller)
+- Typically spawn new agents or send notifications
+- Cannot undo the transition
 
 ### Synchronous Script, Asynchronous Agents
 
-The hook *script* runs synchronously—the transition waits for the script to exit. However, `wiggum spawn` returns immediately after creating the pane. Spawned agents run asynchronously, decoupled from the hook.
+Post-hook *scripts* run in the background. `wiggum spawn` returns immediately after creating the pane. Spawned agents run asynchronously, decoupled from the hook.
 
 ```
 transition to `qa`
        │
        ▼
+[pre-hooks run, can block]
+       │
+       ▼
+[state updated, pushed]
+       │
+       ▼
 ┌─────────────────────────┐
-│ on-review-done hook     │
+│ on-review-done hook     │ (runs in background)
 │                         │
 │  wiggum spawn qa $TK_ID │───▶ (pane created, returns immediately)
-│  echo "spawned"         │              │
 │  exit 0                 │              │
 └─────────────────────────┘              │
        │                                 ▼
        ▼                          QA agent runs
-transition completes              (decoupled)
+transition returns to caller      (decoupled)
 ```
 
 This means:
-- Hooks complete quickly (spawn + exit)
+- Pre-hooks can enforce preconditions
+- Post-hooks complete quickly (spawn + exit)
 - Agents run independently in their panes
-- No blocking on long-running agent work
+- Caller doesn't wait for post-hooks to complete
 
 ---
 
@@ -202,10 +217,10 @@ Users can override by placing their own scripts in `.wiggum/hooks/`. The harness
 
 ## Disabling Hooks
 
-Hooks are triggered by the `post-receive` git hook in the bare repo after sync. To skip hooks, use `--no-sync`:
+To perform a state transition without triggering hooks, use `--no-hooks`:
 
 ```bash
-wiggum ticket transition <id> <state> --no-sync
+wiggum ticket transition <id> <state> --no-hooks
 ```
 
-Note: This prevents the state change from syncing to other agents. Useful for manual intervention or recovery scenarios.
+Note: Sync always happens (pull before read, push after write). Only hook execution is skipped. Useful for manual intervention or recovery scenarios where you don't want to spawn agents.

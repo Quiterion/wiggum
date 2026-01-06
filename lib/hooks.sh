@@ -35,7 +35,9 @@ run_hook() {
     ticket_content=$(read_ticket_content "$ticket_id" 2>/dev/null)
 
     export WIGGUM_TICKET_ID="$ticket_id"
-    export WIGGUM_TICKET_PATH="$(_ticket_path "$ticket_id")"
+    local ticket_path_val
+    ticket_path_val=$(_ticket_path "$ticket_id")
+    export WIGGUM_TICKET_PATH="$ticket_path_val"
     export WIGGUM_TICKET_CONTENT="$ticket_content"
     export WIGGUM_SESSION
     export WIGGUM_HOOKS_DIR="$HOOKS_DIR"
