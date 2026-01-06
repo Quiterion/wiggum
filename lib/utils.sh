@@ -181,41 +181,11 @@ resolve_ticket_id() {
     fi
 }
 
-# Parse YAML frontmatter from markdown file
-# Usage: get_frontmatter_value <file> <key>
-get_frontmatter_value() {
-    local file="$1"
-    local key="$2"
-
-    awk -v key="$key" '
-        /^---$/ { in_fm = !in_fm; next }
-        in_fm && $1 == key":" {
-            sub(/^[^:]+:[[:space:]]*/, "")
-            print
-            exit
-        }
-    ' "$file"
-}
-
-# Update a frontmatter value in a markdown file
-set_frontmatter_value() {
-    local file="$1"
-    local key="$2"
-    local value="$3"
-
-    local temp
-    temp=$(mktemp)
-    awk -v key="$key" -v value="$value" '
-        /^---$/ { in_fm = !in_fm; print; next }
-        in_fm && $1 == key":" {
-            print key ": " value
-            found = 1
-            next
-        }
-        { print }
-    ' "$file" >"$temp"
-    mv "$temp" "$file"
-}
+# NOTE: Frontmatter functions (get_frontmatter_value, set_frontmatter_value) have been
+# moved to the ticket data layer in lib/ticket.sh. Use the CRUD API functions:
+#   - get_ticket_field(id, field)   - pulls first, then gets value
+#   - set_ticket_field(id, field, value)  - pulls first, sets value, pushes after
+# The internal _get_frontmatter_value/_set_frontmatter_value are for use within ticket.sh only.
 
 # Check if a command exists
 require_command() {

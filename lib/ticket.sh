@@ -4,21 +4,194 @@
 #
 # Supports both bare repo (main project) and clone (agent worktrees)
 #
+# Note: Ticket states and transitions are now configurable via ticket_types.sh
+# The old hardcoded VALID_STATES and TRANSITIONS arrays have been replaced
+# with functions that read from .wiggum/ticket_types.json (or use defaults)
 
-# Valid states and transitions
-VALID_STATES=("ready" "in-progress" "review" "qa" "done" "closed")
+###############################################################################
+# TICKET DATA LAYER (CRUD API)
+#
+# INVARIANT: Only functions in this section may access $TICKETS_DIR directly.
+# All other functions MUST use these CRUD operations.
+#
+# Every CRUD operation:
+# - Pulls from origin before reading
+# - Pushes to origin after writing
+###############################################################################
 
-#
-# Ticket I/O abstraction layer
-# Works with both bare repo and clone
-#
+# Track whether we've already synced in the current operation
+# This avoids redundant pulls when doing batch operations
+_TICKET_SYNCED=false
+
+# Reset sync flag (call at start of each CLI command)
+_ticket_reset_sync() {
+    _TICKET_SYNCED=false
+}
+
+# Ensure tickets are synced (pull) - idempotent within operation
+_ticket_ensure_sync() {
+    if [[ "$_TICKET_SYNCED" == "true" ]]; then
+        return 0
+    fi
+    ticket_sync_pull || { error "Failed to pull ticket changes"; return 1; }
+    _TICKET_SYNCED=true
+}
 
 # Check if we're using a clone (vs bare repo)
 has_ticket_clone() {
     [[ -d "$TICKETS_DIR/.git" ]]
 }
 
-# Read ticket content
+# List all ticket IDs (CRUD - pulls first)
+# Usage: list_ticket_ids
+# Returns: newline-separated list of ticket IDs
+list_ticket_ids() {
+    require_project
+    _ticket_ensure_sync || return 1
+
+    for ticket_file in "$TICKETS_DIR"/*.md; do
+        [[ -f "$ticket_file" ]] || continue
+        [[ "$(basename "$ticket_file")" == ".gitkeep" ]] && continue
+        basename "$ticket_file" .md
+    done
+}
+
+# Get ticket file path (internal CRUD helper)
+# Usage: _ticket_path <id>
+# Returns: path to ticket file (does NOT check existence)
+_ticket_path() {
+    echo "$TICKETS_DIR/${1}.md"
+}
+
+# Check if ticket exists (CRUD - pulls first)
+# Usage: ticket_exists <id>
+# Returns: 0 if exists, 1 otherwise
+ticket_exists() {
+    local id="$1"
+    require_project
+    _ticket_ensure_sync || return 1
+    [[ -f "$(_ticket_path "$id")" ]]
+}
+
+# Read ticket content (CRUD - pulls first)
+# Usage: read_ticket_content <id>
+# Returns: ticket content to stdout
+read_ticket_content() {
+    local id="$1"
+    require_project
+    _ticket_ensure_sync || return 1
+
+    local ticket_path
+    ticket_path=$(_ticket_path "$id")
+    if [[ ! -f "$ticket_path" ]]; then
+        return 1
+    fi
+    cat "$ticket_path"
+}
+
+# Write ticket content (CRUD - pulls first, pushes after)
+# Usage: write_ticket_content <id> <content> [commit_msg]
+write_ticket_content() {
+    local id="$1"
+    local content="$2"
+    local commit_msg="${3:-Update ticket: $id}"
+
+    require_project
+    _ticket_ensure_sync || return 1
+    echo "$content" >"$(_ticket_path "$id")"
+    ticket_sync_push "$commit_msg" || { error "Failed to push ticket changes"; return 1; }
+}
+
+# Get frontmatter value from ticket file (INTERNAL - do NOT call directly)
+# Usage: _get_frontmatter_value <file_path> <key>
+# Note: Caller must ensure sync before calling. External code should use get_ticket_field()
+_get_frontmatter_value() {
+    local file="$1"
+    local key="$2"
+    awk -v key="$key" '
+        /^---$/ { in_fm = !in_fm; next }
+        in_fm && $1 == key":" { print $2; exit }
+    ' "$file"
+}
+
+# Set frontmatter value in ticket file (INTERNAL - do NOT call directly)
+# Usage: _set_frontmatter_value <file_path> <key> <value>
+# Note: Caller must ensure sync before calling. External code should use set_ticket_field()
+_set_frontmatter_value() {
+    local file="$1"
+    local key="$2"
+    local value="$3"
+
+    local temp
+    temp=$(mktemp)
+    awk -v key="$key" -v val="$value" '
+        $0 ~ "^"key":" { print key": "val; next }
+        { print }
+    ' "$file" > "$temp"
+    mv "$temp" "$file"
+}
+
+# Get a ticket field value (CRUD - pulls first)
+# Usage: get_ticket_field <id> <field>
+# Returns: field value to stdout
+get_ticket_field() {
+    local id="$1"
+    local field="$2"
+    require_project
+    _ticket_ensure_sync || return 1
+
+    local ticket_path
+    ticket_path=$(_ticket_path "$id")
+    if [[ ! -f "$ticket_path" ]]; then
+        return 1
+    fi
+    _get_frontmatter_value "$ticket_path" "$field"
+}
+
+# Set a ticket field value (CRUD - pulls first, pushes after)
+# Usage: set_ticket_field <id> <field> <value> [commit_msg]
+set_ticket_field() {
+    local id="$1"
+    local field="$2"
+    local value="$3"
+    local commit_msg="${4:-Update $id: $field = $value}"
+
+    require_project
+    _ticket_ensure_sync || return 1
+
+    local ticket_path
+    ticket_path=$(_ticket_path "$id")
+    if [[ ! -f "$ticket_path" ]]; then
+        return 1
+    fi
+    _set_frontmatter_value "$ticket_path" "$field" "$value"
+    ticket_sync_push "$commit_msg" || { error "Failed to push ticket changes"; return 1; }
+}
+
+# Iterate over ticket files (internal helper for batch operations)
+# Usage: for_each_ticket <callback_function>
+# Callback receives: ticket_file_path ticket_id
+# Note: Ensures sync once at start
+_for_each_ticket() {
+    local callback="$1"
+    require_project
+    _ticket_ensure_sync || return 1
+
+    for ticket_file in "$TICKETS_DIR"/*.md; do
+        [[ -f "$ticket_file" ]] || continue
+        [[ "$(basename "$ticket_file")" == ".gitkeep" ]] && continue
+        local ticket_id
+        ticket_id=$(basename "$ticket_file" .md)
+        "$callback" "$ticket_file" "$ticket_id"
+    done
+}
+
+###############################################################################
+# HIGH-LEVEL TICKET API (uses CRUD layer above)
+###############################################################################
+
+# Read ticket content with ID resolution (CLI-facing)
+# Usage: read_ticket <id>
 read_ticket() {
     if [[ $# -lt 1 ]]; then
         error "Usage: wiggum ticket show <id>"
@@ -27,32 +200,25 @@ read_ticket() {
 
     local id
     id=$(resolve_ticket_id "$1") || exit "$EXIT_TICKET_NOT_FOUND"
-    require_project
 
-    # Sync before read operation
-    ticket_sync_pull || error "Failed to pull ticket changes"
-
-    local ticket_path="$TICKETS_DIR/${id}.md"
-    if [[ ! -f "$ticket_path" ]]; then
+    local content
+    if ! content=$(read_ticket_content "$id"); then
         error "Ticket not found: $id"
         exit "$EXIT_TICKET_NOT_FOUND"
     fi
-
-    cat "$ticket_path"
+    echo "$content"
 }
 
-# Write ticket content
+# Write ticket content (CLI-facing wrapper)
 write_ticket() {
     local id="$1"
     local content="$2"
     local commit_msg="${3:-Update ticket: $id}"
-
-    ticket_sync_pull || error "Failed to pull ticket changes"
-    echo "$content" >"$TICKETS_DIR/${id}.md"
-    ticket_sync_push "$commit_msg" || error "Failed to push ticket changes"
+    write_ticket_content "$id" "$content" "$commit_msg"
 }
 
-# Get frontmatter value from ticket (works with both modes)
+# Get frontmatter value from ticket by ID (CLI-facing)
+# Usage: get_ticket_value <id> <key>
 get_ticket_value() {
     local id="$1"
     local key="$2"
@@ -61,7 +227,8 @@ get_ticket_value() {
     echo "$content" | awk -F': ' "/^${key}:/{print \$2; exit}"
 }
 
-# Set frontmatter value in ticket (works with both modes)
+# Set frontmatter value in ticket by ID (CLI-facing)
+# Usage: set_ticket_value <id> <key> <value> [commit_msg]
 set_ticket_value() {
     local id="$1"
     local key="$2"
@@ -85,23 +252,23 @@ set_ticket_value() {
 get_agent_ticket() {
     local agent_id="$1"
     require_project
-
-    # Sync before read operation
-    ticket_sync_pull || error "Failed to pull ticket changes"
+    _ticket_ensure_sync || return 1
 
     local best_ticket=""
     local best_assigned_at=""
     local best_is_done=true
 
-    for ticket_file in "$TICKETS_DIR"/*.md; do
-        [[ -f "$ticket_file" ]] || continue
+    # Use internal helper to iterate (sync already done)
+    _get_agent_ticket_check() {
+        local ticket_file="$1"
+        local ticket_id="$2"
+
         local assigned
-        assigned=$(get_frontmatter_value "$ticket_file" "assigned_agent_id")
+        assigned=$(_get_frontmatter_value "$ticket_file" "assigned_agent_id")
         if [[ "$assigned" == "$agent_id" ]]; then
-            local state assigned_at ticket_id
-            state=$(get_frontmatter_value "$ticket_file" "state")
-            assigned_at=$(get_frontmatter_value "$ticket_file" "assigned_at")
-            ticket_id=$(basename "$ticket_file" .md)
+            local state assigned_at
+            state=$(_get_frontmatter_value "$ticket_file" "state")
+            assigned_at=$(_get_frontmatter_value "$ticket_file" "assigned_at")
 
             local is_done=false
             [[ "$state" == "done" || "$state" == "closed" ]] && is_done=true
@@ -109,35 +276,25 @@ get_agent_ticket() {
             # Priority: non-done tickets over done tickets
             # Within same priority: most recently assigned wins
             if [[ -z "$best_ticket" ]]; then
-                # First match
                 best_ticket="$ticket_id"
                 best_assigned_at="$assigned_at"
                 best_is_done="$is_done"
             elif [[ "$best_is_done" == "true" && "$is_done" == "false" ]]; then
-                # Current is not done, best is done -> prefer current
                 best_ticket="$ticket_id"
                 best_assigned_at="$assigned_at"
                 best_is_done="$is_done"
             elif [[ "$best_is_done" == "$is_done" ]]; then
-                # Same done-status: prefer more recent assignment
                 if [[ "$assigned_at" > "$best_assigned_at" ]]; then
                     best_ticket="$ticket_id"
                     best_assigned_at="$assigned_at"
                     best_is_done="$is_done"
                 fi
             fi
-            # If best is not done and current is done, keep best
         fi
-    done
+    }
 
+    _for_each_ticket _get_agent_ticket_check
     echo "$best_ticket"
-}
-
-# Check if ticket exists
-ticket_exists() {
-    local id="$1"
-    ticket_sync_pull || error "Failed to pull ticket changes"
-    [[ -f "$TICKETS_DIR/${id}.md" ]]
 }
 
 # Get ticket title (first H1)
@@ -152,13 +309,8 @@ get_ticket_deps() {
     read_ticket "$id" | awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}'
 }
 
-# State transition rules: from -> allowed targets
-declare -A TRANSITIONS=(
-    ["ready"]="in-progress closed"
-    ["in-progress"]="review"
-    ["review"]="qa in-progress done closed"
-    ["qa"]="done in-progress closed"
-)
+# State transition rules are now loaded from ticket_types.sh
+# See: get_valid_states(), get_valid_transitions(), is_valid_transition()
 
 # Ticket subcommand router
 cmd_ticket() {
@@ -364,39 +516,36 @@ ticket_list() {
     done
 
     require_project
-
-    # Sync before read operation
-    ticket_sync_pull || error "Failed to pull ticket changes"
+    _ticket_ensure_sync || exit 1
 
     echo ""
     printf "${BOLD}%-10s %-10s %-10s %-3s %-40s${NC}\n" "ID" "STATE" "TYPE" "PRI" "TITLE"
     echo "-------------------------------------------------------------------------------"
 
-    for ticket_file in "$TICKETS_DIR"/*.md; do
-        [[ -f "$ticket_file" ]] || continue
+    # Use CRUD layer for iteration
+    _ticket_list_row() {
+        local ticket_file="$1"
+        local id="$2"
 
-        local id
-        id=$(get_frontmatter_value "$ticket_file" "id")
-        local state
-        state=$(get_frontmatter_value "$ticket_file" "state")
-        local type
-        type=$(get_frontmatter_value "$ticket_file" "type")
-        local priority
-        priority=$(get_frontmatter_value "$ticket_file" "priority")
+        local state type priority title
+        state=$(_get_frontmatter_value "$ticket_file" "state")
+        type=$(_get_frontmatter_value "$ticket_file" "type")
+        priority=$(_get_frontmatter_value "$ticket_file" "priority")
 
         # Apply filters
-        if [[ -n "$filter_state" ]] && [[ "$state" != "$filter_state" ]]; then continue; fi
-        if [[ -n "$filter_type" ]] && [[ "$type" != "$filter_type" ]]; then continue; fi
+        if [[ -n "$filter_state" ]] && [[ "$state" != "$filter_state" ]]; then return; fi
+        if [[ -n "$filter_type" ]] && [[ "$type" != "$filter_type" ]]; then return; fi
 
         # Get title (first H1)
-        local title
         title=$(grep -m1 '^# ' "$ticket_file" | sed 's/^# //')
 
         # Truncate title if needed
         if [[ ${#title} -gt 38 ]]; then title="${title:0:35}..."; fi
 
         printf "%-10s %-10s %-10s %-3s %-40s\n" "$id" "$state" "$type" "$priority" "$title"
-    done
+    }
+
+    _for_each_ticket _ticket_list_row
 
     echo ""
 }
@@ -408,20 +557,8 @@ ticket_show() {
         exit "$EXIT_INVALID_ARGS"
     fi
 
-    local id
-    id=$(resolve_ticket_id "$1") || exit "$EXIT_TICKET_NOT_FOUND"
-    require_project
-
-    # Sync before read operation
-    ticket_sync_pull || error "Failed to pull ticket changes"
-
-    local ticket_path="$TICKETS_DIR/${id}.md"
-    if [[ ! -f "$ticket_path" ]]; then
-        error "Ticket not found: $id"
-        exit "$EXIT_TICKET_NOT_FOUND"
-    fi
-
-    cat "$ticket_path"
+    # Use the CRUD read_ticket function which handles sync and resolution
+    read_ticket "$1"
 }
 
 # List ready tickets (no unmet dependencies)
@@ -441,17 +578,22 @@ ticket_ready() {
     done
 
     require_project
-
-    # Sync before read operation
-    ticket_sync_pull || error "Failed to pull ticket changes"
+    _ticket_ensure_sync || exit 1
 
     local count=0
-    for ticket_file in "$TICKETS_DIR"/*.md; do
-        [[ -f "$ticket_file" ]] || continue
+    local ready_tickets=""
+
+    # Use CRUD layer for iteration
+    _ticket_ready_check() {
+        local ticket_file="$1"
+        local ticket_id="$2"
+
+        # Check if already hit limit
+        if [[ -n "$limit" ]] && [[ $count -ge $limit ]]; then return; fi
 
         local state
-        state=$(get_frontmatter_value "$ticket_file" "state")
-        if [[ "$state" != "ready" ]]; then continue; fi
+        state=$(_get_frontmatter_value "$ticket_file" "state")
+        if [[ "$state" != "ready" ]]; then return; fi
 
         # Check dependencies
         local blocked=false
@@ -460,10 +602,10 @@ ticket_ready() {
 
         for dep in $deps; do
             if [[ -z "$dep" ]]; then continue; fi
-            local dep_file="$TICKETS_DIR/${dep}.md"
-            if [[ -f "$dep_file" ]]; then
-                local dep_state
-                dep_state=$(get_frontmatter_value "$dep_file" "state")
+            # Check dependency state via CRUD
+            local dep_content dep_state
+            if dep_content=$(read_ticket_content "$dep" 2>/dev/null); then
+                dep_state=$(echo "$dep_content" | awk '/^state:/{print $2; exit}')
                 if [[ "$dep_state" != "done" ]]; then
                     blocked=true
                     break
@@ -471,30 +613,28 @@ ticket_ready() {
             fi
         done
 
-        if [[ "$blocked" == "true" ]]; then continue; fi
+        if [[ "$blocked" == "true" ]]; then return; fi
 
-        local id
-        id=$(get_frontmatter_value "$ticket_file" "id")
-        echo "$id"
-
+        echo "$ticket_id"
         count=$((count + 1))
-        if [[ -n "$limit" ]] && [[ $count -ge $limit ]]; then break; fi
-    done
+    }
+
+    _for_each_ticket _ticket_ready_check
 }
 
 # List blocked tickets
 ticket_blocked() {
     require_project
+    _ticket_ensure_sync || exit 1
 
-    # Sync before read operation
-    ticket_sync_pull || error "Failed to pull ticket changes"
-
-    for ticket_file in "$TICKETS_DIR"/*.md; do
-        [[ -f "$ticket_file" ]] || continue
+    # Use CRUD layer for iteration
+    _ticket_blocked_check() {
+        local ticket_file="$1"
+        local ticket_id="$2"
 
         local state
-        state=$(get_frontmatter_value "$ticket_file" "state")
-        if [[ "$state" != "ready" ]]; then continue; fi
+        state=$(_get_frontmatter_value "$ticket_file" "state")
+        if [[ "$state" != "ready" ]]; then return; fi
 
         # Check dependencies
         local deps
@@ -503,10 +643,10 @@ ticket_blocked() {
 
         for dep in $deps; do
             if [[ -z "$dep" ]]; then continue; fi
-            local dep_file="$TICKETS_DIR/${dep}.md"
-            if [[ -f "$dep_file" ]]; then
-                local dep_state
-                dep_state=$(get_frontmatter_value "$dep_file" "state")
+            # Check dependency state via CRUD
+            local dep_content dep_state
+            if dep_content=$(read_ticket_content "$dep" 2>/dev/null); then
+                dep_state=$(echo "$dep_content" | awk '/^state:/{print $2; exit}')
                 if [[ "$dep_state" != "done" ]]; then
                     blocking_deps="$blocking_deps $dep"
                 fi
@@ -514,11 +654,11 @@ ticket_blocked() {
         done
 
         if [[ -n "$blocking_deps" ]]; then
-            local id
-            id=$(get_frontmatter_value "$ticket_file" "id")
-            echo "$id blocked by:$blocking_deps"
+            echo "$ticket_id blocked by:$blocking_deps"
         fi
-    done
+    }
+
+    _for_each_ticket _ticket_blocked_check
 }
 
 # Show dependency tree
@@ -531,9 +671,7 @@ ticket_tree() {
     local id
     id=$(resolve_ticket_id "$1") || exit "$EXIT_TICKET_NOT_FOUND"
     require_project
-
-    # Sync before read operation
-    ticket_sync_pull || error "Failed to pull ticket changes"
+    _ticket_ensure_sync || exit 1
 
     _print_tree "$id" 0
 }
@@ -547,16 +685,17 @@ _print_tree() {
         indent="$indent  "
     done
 
-    local ticket_path="$TICKETS_DIR/${id}.md"
-    if [[ ! -f "$ticket_path" ]]; then
+    # Use CRUD layer to read ticket
+    local content
+    if ! content=$(read_ticket_content "$id" 2>/dev/null); then
         echo "${indent}$id (not found)"
         return
     fi
 
     local state
-    state=$(get_frontmatter_value "$ticket_path" "state")
+    state=$(echo "$content" | awk '/^state:/{print $2; exit}')
     local title
-    title=$(grep -m1 '^# ' "$ticket_path" | sed 's/^# //')
+    title=$(echo "$content" | grep -m1 '^# ' | sed 's/^# //')
 
     if [[ $depth -eq 0 ]]; then
         echo "$id [$state] $title"
@@ -566,7 +705,7 @@ _print_tree() {
 
     # Print dependencies
     local deps
-    deps=$(awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}' "$ticket_path")
+    deps=$(echo "$content" | awk '/^depends_on:/{flag=1; next} /^[a-z]/{flag=0} flag && /^ *-/{print $2}')
     for dep in $deps; do
         if [[ -z "$dep" ]]; then continue; fi
         _print_tree "$dep" $((depth + 1))
@@ -633,9 +772,12 @@ merge_to_feature() {
 }
 
 # Transition ticket state
+# Hooks are now invoked directly from this function (not via git hooks)
+# Use --no-hooks to skip hook invocation (sync always happens)
+# Sync invariants are mandatory and cannot be disabled.
 ticket_transition() {
     if [[ $# -lt 2 ]]; then
-        error "Usage: wiggum ticket transition <id> <state> [--no-sync]"
+        error "Usage: wiggum ticket transition <id> <state> [--no-hooks]"
         exit "$EXIT_INVALID_ARGS"
     fi
 
@@ -644,11 +786,11 @@ ticket_transition() {
     local new_state="$2"
     shift 2
 
-    local no_sync=false
+    local no_hooks=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
-        --no-sync)
-            no_sync=true
+        --no-hooks)
+            no_hooks=true
             shift
             ;;
         *)
@@ -658,19 +800,22 @@ ticket_transition() {
     done
 
     require_project
+    load_config
 
-    # Sync before write operation
-    if [[ "$no_sync" != "true" ]]; then
-        ticket_sync_pull || error "Failed to pull ticket changes"
-    fi
+    # Use CRUD layer for sync (invariant: always sync before read)
+    _ticket_ensure_sync || exit 1
 
-    local ticket_path="$TICKETS_DIR/${id}.md"
+    # Use CRUD layer for path resolution
+    local ticket_path
+    ticket_path=$(_ticket_path "$id")
     local current_state
-    current_state=$(get_frontmatter_value "$ticket_path" "state")
+    current_state=$(_get_frontmatter_value "$ticket_path" "state")
 
-    # Validate state
+    # Validate state using ticket_types
+    local valid_states
+    valid_states=$(get_valid_states)
     local valid=false
-    for s in "${VALID_STATES[@]}"; do
+    for s in $valid_states; do
         if [[ "$new_state" == "$s" ]]; then
             valid=true
             break
@@ -679,22 +824,40 @@ ticket_transition() {
 
     if [[ "$valid" != "true" ]]; then
         error "Invalid state: $new_state"
-        error "Valid states: ${VALID_STATES[*]}"
+        error "Valid states: $valid_states"
         exit "$EXIT_INVALID_TRANSITION"
     fi
 
-    # Check transition is allowed (space-delimited list)
-    local allowed="${TRANSITIONS[$current_state]:-}"
-    if [[ ! " $allowed " == *" $new_state "* ]]; then
+    # Check transition is allowed using ticket_types
+    if ! is_valid_transition "$current_state" "$new_state"; then
+        local allowed
+        allowed=$(get_valid_transitions "$current_state")
         error "Cannot transition from '$current_state' to '$new_state'"
         error "Allowed transitions from '$current_state': $allowed"
         exit "$EXIT_INVALID_TRANSITION"
     fi
 
+    # Run pre-transition hooks (in worktree, before state change)
+    if [[ "$no_hooks" != "true" ]]; then
+        local pre_hooks
+        pre_hooks=$(get_transition_hooks "$current_state" "$new_state" "pre")
+        for hook in $pre_hooks; do
+            [[ -z "$hook" ]] && continue
+            debug "Running pre-transition hook: $hook"
+            export WIGGUM_PREV_STATE="$current_state"
+            export WIGGUM_NEW_STATE="$new_state"
+            export WIGGUM_HOOK_PHASE="pre"
+            if ! run_hook "$hook" "$id"; then
+                error "Pre-transition hook '$hook' failed - transition blocked"
+                exit "$EXIT_ERROR"
+            fi
+        done
+    fi
+
     # For in-progress -> review transitions, merge worker branch to feature branch
     if [[ "$current_state" == "in-progress" ]] && [[ "$new_state" == "review" ]]; then
         local assigned_agent
-        assigned_agent=$(get_frontmatter_value "$ticket_path" "assigned_agent_id")
+        assigned_agent=$(_get_frontmatter_value "$ticket_path" "assigned_agent_id")
         if [[ -n "$assigned_agent" ]] && [[ "$assigned_agent" == worker-* ]]; then
             info "Merging worker changes to feature branch before review..."
             if ! merge_to_feature "$id" "$assigned_agent"; then
@@ -704,13 +867,25 @@ ticket_transition() {
         fi
     fi
 
-    # Update state
-    set_frontmatter_value "$ticket_path" "state" "$new_state"
+    # Update state (uses internal helper)
+    _set_frontmatter_value "$ticket_path" "state" "$new_state"
 
-    # Sync after write operation (hooks triggered by post-receive in bare repo)
-    # shellcheck disable=SC2015
-    if [[ "$no_sync" != "true" ]]; then
-        ticket_sync_push "Transition $id: $current_state → $new_state" || error "Failed to push ticket changes"
+    # Sync after write operation (invariant: always push after write)
+    ticket_sync_push "Transition $id: $current_state → $new_state" || error "Failed to push ticket changes"
+
+    # Run post-transition hooks (after successful sync)
+    if [[ "$no_hooks" != "true" ]]; then
+        local post_hooks
+        post_hooks=$(get_transition_hooks "$current_state" "$new_state" "post")
+        for hook in $post_hooks; do
+            [[ -z "$hook" ]] && continue
+            debug "Running post-transition hook: $hook"
+            export WIGGUM_PREV_STATE="$current_state"
+            export WIGGUM_NEW_STATE="$new_state"
+            export WIGGUM_HOOK_PHASE="post"
+            # Post-hooks run asynchronously and don't block transition
+            run_hook "$hook" "$id" &
+        done
     fi
 
     success "Transitioned $id: $current_state -> $new_state"
@@ -728,8 +903,10 @@ ticket_edit() {
     require_project
     load_config
 
-    ticket_sync_pull || error "Failed to pull ticket changes"
-    local ticket_path="$TICKETS_DIR/${id}.md"
+    # Use CRUD layer for sync and path
+    _ticket_ensure_sync || exit 1
+    local ticket_path
+    ticket_path=$(_ticket_path "$id")
     ${WIGGUM_EDITOR} "$ticket_path"
     ticket_sync_push || error "Failed to push ticket changes"
 }
@@ -749,10 +926,10 @@ ticket_comment() {
 
     require_project
 
-    # Sync before write operation
-    ticket_sync_pull || error "Failed to pull ticket changes"
-
-    local ticket_path="$TICKETS_DIR/${id}.md"
+    # Use CRUD layer for sync and path
+    _ticket_ensure_sync || exit 1
+    local ticket_path
+    ticket_path=$(_ticket_path "$id")
 
     # Append comment to ticket
     local comment_entry
@@ -778,21 +955,6 @@ $message
     # Sync after write operation
     ticket_sync_push "Comments on $id from $source" || error "Failed to push ticket changes"
 
-    # Pinging done in hook
-    ## Ping assigned agent if any
-    #local agent_id
-    #agent_id=$(get_frontmatter_value "$ticket_path" "assigned_agent_id")
-    #if [[ -n "$agent_id" ]]; then
-    #    load_config
-    #    if session_exists "$WIGGUM_SESSION"; then
-    #        local tmux_pane_id
-    #        tmux_pane_id=$(get_tmux_pane_id "$agent_id")
-    #        if [[ -n "$tmux_pane_id" ]]; then
-    #            send_pane_input "$tmux_pane_id" "# Comments added to your ticket. Please address."
-    #        fi
-    #    fi
-    #fi
-
     success "Added comment to $id"
 }
 
@@ -809,18 +971,18 @@ ticket_assign() {
 
     require_project
 
-    # Sync before write operation
-    ticket_sync_pull || error "Failed to pull ticket changes"
-
-    local ticket_path="$TICKETS_DIR/${id}.md"
+    # Use CRUD layer for sync and path
+    _ticket_ensure_sync || exit 1
+    local ticket_path
+    ticket_path=$(_ticket_path "$id")
     if [[ ! -f "$ticket_path" ]]; then
         error "Ticket not found: $id"
         exit "$EXIT_TICKET_NOT_FOUND"
     fi
 
-    # Set assignment fields
-    set_frontmatter_value "$ticket_path" "assigned_agent_id" "$agent_id"
-    set_frontmatter_value "$ticket_path" "assigned_at" "$(timestamp)"
+    # Set assignment fields (uses internal helpers)
+    _set_frontmatter_value "$ticket_path" "assigned_agent_id" "$agent_id"
+    _set_frontmatter_value "$ticket_path" "assigned_at" "$(timestamp)"
 
     # Sync after write operation
     ticket_sync_push "Assign $agent_id to $id" || error "Failed to push ticket changes"
@@ -840,21 +1002,21 @@ ticket_unassign() {
 
     require_project
 
-    # Sync before write operation
-    ticket_sync_pull || error "Failed to pull ticket changes"
-
-    local ticket_path="$TICKETS_DIR/${id}.md"
+    # Use CRUD layer for sync and path
+    _ticket_ensure_sync || exit 1
+    local ticket_path
+    ticket_path=$(_ticket_path "$id")
     if [[ ! -f "$ticket_path" ]]; then
         error "Ticket not found: $id"
         exit "$EXIT_TICKET_NOT_FOUND"
     fi
 
     local prev_agent
-    prev_agent=$(get_frontmatter_value "$ticket_path" "assigned_agent_id")
+    prev_agent=$(_get_frontmatter_value "$ticket_path" "assigned_agent_id")
 
-    # Clear assignment fields
-    set_frontmatter_value "$ticket_path" "assigned_agent_id" ""
-    set_frontmatter_value "$ticket_path" "assigned_at" ""
+    # Clear assignment fields (uses internal helpers)
+    _set_frontmatter_value "$ticket_path" "assigned_agent_id" ""
+    _set_frontmatter_value "$ticket_path" "assigned_at" ""
 
     # Sync after write operation
     ticket_sync_push "Unassign $id" || error "Failed to push ticket changes"

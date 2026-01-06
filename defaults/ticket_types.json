@@ -1,0 +1,61 @@
+{
+  "states": ["ready", "in-progress", "review", "qa", "done", "closed"],
+  "transitions": {
+    "ready": {
+      "targets": ["in-progress", "closed"],
+      "hooks": {
+        "pre": [],
+        "post": {
+          "in-progress": ["on-claim"]
+        }
+      }
+    },
+    "in-progress": {
+      "targets": ["review"],
+      "hooks": {
+        "pre": {
+          "review": ["pre-review"]
+        },
+        "post": {
+          "review": ["on-draft-done"]
+        }
+      }
+    },
+    "review": {
+      "targets": ["qa", "in-progress", "done", "closed"],
+      "hooks": {
+        "pre": [],
+        "post": {
+          "qa": ["on-review-done"],
+          "in-progress": ["on-review-rejected"]
+        }
+      }
+    },
+    "qa": {
+      "targets": ["done", "in-progress", "closed"],
+      "hooks": {
+        "pre": [],
+        "post": {
+          "done": ["on-qa-done", "on-close"],
+          "in-progress": ["on-qa-rejected"]
+        }
+      }
+    },
+    "done": {
+      "targets": [],
+      "hooks": {
+        "pre": [],
+        "post": {}
+      }
+    },
+    "closed": {
+      "targets": [],
+      "hooks": {
+        "pre": [],
+        "post": {}
+      }
+    }
+  },
+  "default_type": "task",
+  "types": ["feature", "bug", "task", "epic", "chore"]
+}

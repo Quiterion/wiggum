@@ -46,6 +46,7 @@ setup() {
     git init --quiet
     git config user.email "test@test.com"
     git config user.name "Test User"
+    git config commit.gpgsign false
 }
 
 teardown() {

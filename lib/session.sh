@@ -133,6 +133,12 @@ CLAUDE_SETTINGS
     done
     success "Prompts initialized"
 
+    # Copy default ticket types configuration if not present
+    if [[ ! -f "$wiggum_dir/ticket_types.json" ]] && [[ -f "$WIGGUM_DEFAULTS/ticket_types.json" ]]; then
+        cp "$WIGGUM_DEFAULTS/ticket_types.json" "$wiggum_dir/ticket_types.json"
+        success "Ticket types configuration initialized"
+    fi
+
     success "wiggum initialized"
     echo ""
     echo "Next steps:"

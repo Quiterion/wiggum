@@ -205,18 +205,15 @@ build_agent_prompt() {
     local comment=""
 
     if [[ -n "$ticket_id" ]]; then
+        # Use CRUD API which handles sync automatically
+        ticket_content=$(read_ticket_content "$ticket_id" 2>/dev/null || true)
 
-        ticket_sync_pull || error "Failed to pull ticket changes"
-
-        local ticket_path="$TICKETS_DIR/${ticket_id}.md"
-        if [[ -f "$ticket_path" ]]; then
-            ticket_content=$(cat "$ticket_path")
-
+        if [[ -n "$ticket_content" ]]; then
             # Extract comment section if present
-            comment=$(awk '/^## Comment/,/^## [^F]|^$/' "$ticket_path" || true)
+            comment=$(echo "$ticket_content" | awk '/^## Comment/,/^## [^F]|^$/' || true)
 
-            # Extract dependencies
-            dependencies=$(get_frontmatter_value "$ticket_path" "depends_on" || true)
+            # Extract dependencies using CRUD API (sync already done by read_ticket_content)
+            dependencies=$(get_ticket_field "$ticket_id" "depends_on" 2>/dev/null || true)
         fi
     fi
 

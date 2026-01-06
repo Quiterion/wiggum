@@ -7,6 +7,7 @@
 #
 
 # Run a hook if it exists
+# Note: Hooks are invoked from ticket_transition() which ensures the clone is synced
 run_hook() {
     local hook_name="$1"
     local ticket_id="$2"
@@ -28,21 +29,23 @@ run_hook() {
 
     debug "Running hook: $hook_path"
 
-    # Set up environment - read from bare repo (source of truth)
-    # NOT from main clone which may be stale
+    # Set up environment - read from clone (synced by ticket_transition)
+    # The CRUD layer ensures clone is up to date before any operation
     local ticket_content
-    ticket_content=$(bare_read_ticket "${ticket_id}.md" 2>/dev/null)
+    ticket_content=$(read_ticket_content "$ticket_id" 2>/dev/null)
 
     export WIGGUM_TICKET_ID="$ticket_id"
-    export WIGGUM_TICKET_PATH="$TICKETS_DIR/${ticket_id}.md"
-    export WIGGUM_TICKET_CONTENT="$ticket_content" # Fresh content from bare repo
+    local ticket_path_val
+    ticket_path_val=$(_ticket_path "$ticket_id")
+    export WIGGUM_TICKET_PATH="$ticket_path_val"
+    export WIGGUM_TICKET_CONTENT="$ticket_content"
     export WIGGUM_SESSION
     export WIGGUM_HOOKS_DIR="$HOOKS_DIR"
     # Export the wiggum binary path so hooks use the same version
     # (important for worktree-based development and testing)
     export WIGGUM_BIN="${WIGGUM_BIN:-$(command -v wiggum)}"
-    # WIGGUM_PREV_STATE and WIGGUM_NEW_STATE set by post-receive hook
-    # WIGGUM_AGENT_ID computed from ticket (from bare repo)
+    # WIGGUM_PREV_STATE and WIGGUM_NEW_STATE set by ticket_transition()
+    # WIGGUM_AGENT_ID computed from ticket
     if [[ -n "$ticket_content" ]]; then
         WIGGUM_AGENT_ID=$(echo "$ticket_content" | awk '/^assigned_agent_id:/{print $2; exit}')
         export WIGGUM_AGENT_ID

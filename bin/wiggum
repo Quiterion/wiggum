@@ -38,6 +38,7 @@ export EXIT_MERGE_CONFLICT=7
 source "$WIGGUM_LIB/config.sh"
 source "$WIGGUM_LIB/utils.sh"
 source "$WIGGUM_LIB/sync.sh"
+source "$WIGGUM_LIB/ticket_types.sh"
 source "$WIGGUM_LIB/session.sh"
 source "$WIGGUM_LIB/pane.sh"
 source "$WIGGUM_LIB/ticket.sh"

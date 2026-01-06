@@ -21,6 +21,8 @@ The underlying `tk` CLI is vendored and available, but users interact via `wiggu
 
 ## State Machine
 
+States and transitions are configurable via `.wiggum/ticket_types.json`. The default configuration provides:
+
 ```
 ┌───────────┐     ┌─────────────┐     ┌──────────┐     ┌────────┐
 │   ready   │───▶│ in-progress │───▶│  review  │───▶│   qa   │
@@ -34,6 +36,35 @@ The underlying `tk` CLI is vendored and available, but users interact via `wiggu
                                                     │  done  │
                                                     └────────┘
 ```
+
+### Ticket Type Configuration
+
+The state machine is configured in `.wiggum/ticket_types.json`:
+
+```json
+{
+  "states": ["ready", "in-progress", "review", "qa", "done", "closed"],
+  "transitions": {
+    "ready": {
+      "targets": ["in-progress", "closed"],
+      "hooks": { "pre": [], "post": { "in-progress": ["on-claim"] } }
+    },
+    "in-progress": {
+      "targets": ["review"],
+      "hooks": { "pre": [], "post": { "review": ["on-draft-done"] } }
+    }
+    // ... etc
+  },
+  "default_type": "task",
+  "types": ["feature", "bug", "task", "epic", "chore"]
+}
+```
+
+This allows projects to:
+- Define custom states for their workflow
+- Configure valid transitions between states
+- Specify pre-transition hooks (can block transition)
+- Specify post-transition hooks (run after successful sync)
 
 ### States
 
@@ -260,8 +291,8 @@ Tickets are stored in a separate git repository for multi-agent synchronization.
 ```
 .wiggum/
 ├── tickets.git/          ← bare repo (origin)
-│   └── hooks/            ← pre-receive, post-receive
-└── tickets/              ← clone (for CLI access)
+├── tickets/              ← clone (for CLI access)
+└── ticket_types.json     ← state machine configuration
 
 worktrees/
 ├── worker-0/.wiggum/tickets/    ← clone
@@ -270,14 +301,24 @@ worktrees/
 
 All agents (including supervisor) have their own clone. They push/pull to the bare repo.
 
-### Push Flow
+### Operation Flow
+
+All ticket operations use the CRUD data layer which enforces sync invariants:
 
 ```
-agent edits ticket → commits → pushes
-                                 ↓
-                         pre-receive validates state transition
-                                 ↓
-                         post-receive triggers hooks (spawn reviewer, etc.)
+agent calls wiggum ticket transition
+                    ↓
+         CRUD layer pulls from origin
+                    ↓
+         Validates transition using ticket_types.json
+                    ↓
+         Runs pre-transition hooks (can block)
+                    ↓
+         Updates ticket state locally
+                    ↓
+         CRUD layer pushes to origin
+                    ↓
+         Runs post-transition hooks (async)
 ```
 
 ### Auto-Sync
@@ -286,7 +327,7 @@ Ticket commands auto-sync by default:
 - **Read ops** (`show`, `list`, `ready`) — pull first
 - **Write ops** (`create`, `transition`, `comment`) — pull, act, push
 
-Disable with `WIGGUM_AUTO_SYNC=false` or `--no-sync` flag.
+Sync is mandatory and cannot be disabled. This ensures all agents always see consistent state.
 
 ### Manual Sync
 
@@ -307,6 +348,6 @@ The bare repo uses `*.md merge=union` to append conflicting additions.
 ### Concurrent Transitions
 
 If two agents try to transition the same ticket:
-1. First push succeeds, hooks fire
-2. Second push rejected by pre-receive (state already changed)
-3. Second agent pulls, sees new state, adjusts
+1. First transition: pulls, validates, updates, pushes, hooks fire
+2. Second transition: pulls (gets new state), validates against actual current state, proceeds or fails
+3. No git hook rejection needed—validation happens in `ticket_transition()` after pull

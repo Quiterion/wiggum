@@ -28,24 +28,20 @@ test_init_creates_tickets_clone() {
     assert_dir_exists ".wiggum/tickets/.git" "Tickets dir should be a git clone"
 }
 
-test_init_has_pre_receive_hook() {
-    "$WIGGUM_BIN" init
-    assert_file_exists ".wiggum/tickets.git/hooks/pre-receive" "Should install pre-receive hook"
+# NOTE: Bare repo hooks have been removed as part of the ticket refactor.
+# Validation and hook invocation now happens directly in ticket_transition().
+# These test functions are kept as no-ops for backwards compatibility.
 
-    # Check it's executable
-    if [[ ! -x ".wiggum/tickets.git/hooks/pre-receive" ]]; then
-        echo "pre-receive hook should be executable"
+test_init_no_bare_repo_hooks() {
+    "$WIGGUM_BIN" init
+
+    # Verify hooks are NOT installed (they've been removed)
+    if [[ -f ".wiggum/tickets.git/hooks/pre-receive" ]]; then
+        echo "pre-receive hook should NOT be installed (deprecated)"
         return 1
     fi
-}
-
-test_init_has_post_receive_hook() {
-    "$WIGGUM_BIN" init
-    assert_file_exists ".wiggum/tickets.git/hooks/post-receive" "Should install post-receive hook"
-
-    # Check it's executable
-    if [[ ! -x ".wiggum/tickets.git/hooks/post-receive" ]]; then
-        echo "post-receive hook should be executable"
+    if [[ -f ".wiggum/tickets.git/hooks/post-receive" ]]; then
+        echo "post-receive hook should NOT be installed (deprecated)"
         return 1
     fi
 }
@@ -57,8 +53,8 @@ test_init_updates_gitignore() {
 
     local content
     content=$(cat .gitignore)
-    assert_contains "$content" ".wiggum/tickets.git/" "Should ignore bare repo"
-    assert_contains "$content" ".wiggum/tickets/" "Should ignore tickets clone"
+    # .wiggum/ is ignored as a directory (includes tickets.git and tickets)
+    assert_contains "$content" ".wiggum/" "Should ignore wiggum directory"
     assert_contains "$content" "worktrees/" "Should ignore worktrees"
 }
 
@@ -122,8 +118,7 @@ test_help_shows_ticket_sync() {
 DISTRIBUTED_TESTS=(
     "Init creates bare repo:test_init_creates_bare_repo"
     "Init creates tickets clone:test_init_creates_tickets_clone"
-    "Init has pre-receive hook:test_init_has_pre_receive_hook"
-    "Init has post-receive hook:test_init_has_post_receive_hook"
+    "Init no bare repo hooks:test_init_no_bare_repo_hooks"
     "Init updates gitignore:test_init_updates_gitignore"
     "Init creates initial commit:test_init_creates_initial_commit"
     "Ticket sync command exists:test_ticket_sync_command_exists"
